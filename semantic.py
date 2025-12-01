@@ -2,7 +2,7 @@ import argparse
 import torch
 from typing import List
 from sentence_transformers import SentenceTransformer
-from FlagEmbedding import FlagModel
+from FlagEmbedding import FlagReranker
 
 from bm25 import load_dataset, evaluate
 from config.config import EMBEDDING_MODEL, EMBEDDING_BATCH_SIZE
@@ -13,7 +13,7 @@ class BaseRAG:
     def __init__(self, dataset):
         self.dataset = dataset
         self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
-        self.reranker_model = FlagModel(RERANKER_MODEL)
+        self.reranker_model = FlagReranker(RERANKER_MODEL, use_fp16=True)
         
         self.setup()
 
