@@ -11,8 +11,9 @@ from config.config import RERANKER_MODEL
 
 class BaseRAG:
 
-    def __init__(self, dataset):
+    def __init__(self, dataset, dataset_type='hotpotqa'):
         self.dataset = dataset
+        self.dataset_type = dataset_type
         self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
         self.reranker_model = FlagReranker(RERANKER_MODEL, use_fp16=True)
 
@@ -21,12 +22,24 @@ class BaseRAG:
     def setup(self):
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
-        for item in self.dataset:
-            for ctx in item["context"]:
-                title = ctx[0]
-                for idx, ct in enumerate(ctx[1]):
-                    self.hash_id_to_text[(title, idx)] = ct
-                    self.text_to_hash_id[ct] = (title, idx)
+        
+        if self.dataset_type == 'hotpotqa':
+            # HotpotQA format: context is [title, [sentences]]
+            for item in self.dataset:
+                for ctx in item["context"]:
+                    title = ctx[0]
+                    for idx, ct in enumerate(ctx[1]):
+                        self.hash_id_to_text[(title, idx)] = ct
+                        self.text_to_hash_id[ct] = (title, idx)
+        elif self.dataset_type == 'musique':
+            # MuSiQue format: paragraphs is list of {idx, title, paragraph_text}
+            for item in self.dataset:
+                for para in item['paragraphs']:
+                    title = para['title']
+                    idx = para['idx']
+                    text = para['paragraph_text']
+                    self.hash_id_to_text[(title, idx)] = text
+                    self.text_to_hash_id[text] = (title, idx)
 
     def encoder_single(self, text: str) -> torch.Tensor:
         return self.embedding_model.encode(text, convert_to_tensor=True)
@@ -49,10 +62,20 @@ class BaseRAG:
             corpus = []
             doc_ids = []  # Store (title, idx) for each document
 
-            for ctx in item["context"]:
-                title = ctx[0]
-                for idx, ct in enumerate(ctx[1]):
-                    corpus.append(ct)
+            if self.dataset_type == 'hotpotqa':
+                # HotpotQA format
+                for ctx in item["context"]:
+                    title = ctx[0]
+                    for idx, ct in enumerate(ctx[1]):
+                        corpus.append(ct)
+                        doc_ids.append((title, idx))
+            elif self.dataset_type == 'musique':
+                # MuSiQue format
+                for para in item['paragraphs']:
+                    title = para['title']
+                    idx = para['idx']
+                    text = para['paragraph_text']
+                    corpus.append(text)
                     doc_ids.append((title, idx))
 
             corpus_embeddings = self.encode_batch(corpus)
@@ -62,7 +85,8 @@ class BaseRAG:
                 dim=1, keepdim=True
             )
             scores = torch.matmul(query_embedding, corpus_embeddings.T)
-            self.scores[item["_id"]] = {
+            query_id = item.get('_id') or item.get('id')  # HotpotQA uses '_id', MuSiQue uses 'id'
+            self.scores[query_id] = {
                 doc_id: score.item() for doc_id, score in zip(doc_ids, scores)
             }
         print(f"Processed {len(self.scores)} queries")
@@ -105,9 +129,17 @@ def get_top_k_scores(scores, top_k=10):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="hotpotqa",
+        choices=['hotpotqa', 'musique'],
+        help="Dataset format type"
+    )
+    parser.add_argument(
         "--dataset_path",
         type=str,
         default="datasets/hotpotqa/hotpot_dev_fullwiki_v1_100.json",
+        help="Path to dataset file"
     )
     parser.add_argument(
         "--top_k",
@@ -123,12 +155,21 @@ def main():
     )
     args = parser.parse_args()
 
-    dataset = load_dataset(args.dataset_path)
-    golds = {
-        item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
-        for item in dataset
-    }
-    base_rag = BaseRAG(dataset)
+    dataset = load_dataset(args.dataset_path, args.dataset_type)
+    
+    # Extract gold supporting facts based on dataset type
+    if args.dataset_type == 'hotpotqa':
+        golds = {
+            item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
+            for item in dataset
+        }
+    elif args.dataset_type == 'musique':
+        golds = {
+            item["id"]: [(para["title"], para["idx"]) for para in item["paragraphs"] if para["is_supporting"]]
+            for item in dataset
+        }
+    
+    base_rag = BaseRAG(dataset, args.dataset_type)
     scores = base_rag.get_scores()
     top_k_scores = get_top_k_scores(scores, args.top_k)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
@@ -162,7 +203,7 @@ def main():
     preds = {key: [v[0] for v in value] for key, value in final_scores.items()}
     prec, recall, f1 = evaluate(golds, preds)
     print("Metrics after rerank:")
-    print(f"Precision: {prec}, Recall: {recall}, F1: {f1}")
+    print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
     print("--------------------------------")
 
 
