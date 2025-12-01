@@ -102,17 +102,17 @@ class BaseRAG:
         """
         reranked_scores = {}
         for item in self.dataset:
-            id = item["_id"]
+            query_id = item.get("_id") or item.get("id")  # Handle both HotpotQA and MuSiQue
             query = item["question"]
             doc_ids = []
             pairs = []
             
             # Build query-document pairs from top-k results
-            for doc_id, _ in scores[id]:
+            for doc_id, _ in scores[query_id]:
                 pairs.append([query, self.hash_id_to_text[doc_id]])
                 doc_ids.append(doc_id)
             rerank_scores = self.reranker_model.compute_score(pairs)
-            reranked_scores[id] = {
+            reranked_scores[query_id] = {
                 doc_id: score for doc_id, score in zip(doc_ids, rerank_scores)
             }
         return reranked_scores

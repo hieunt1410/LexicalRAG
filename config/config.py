@@ -22,7 +22,7 @@ DEFAULT_MODEL = "gpt-4o-mini"  # please specify your preferred LLM model
 DEFAULT_MAX_TOKENS = 250
 
 # Embedding Configuration
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"  # please specify your preferred embedding model
+EMBEDDING_MODEL = "mixedbread-ai/mxbai-embed-large-v1"  # please specify your preferred embedding model
 EMBEDDING_BATCH_SIZE = 32
 
 # Reranker Configuration
