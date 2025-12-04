@@ -142,7 +142,7 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpot_dev_fullwiki_v1_100.json",
+        default="datasets/hotpotqa/hotpot.json",
         help="Path to dataset file",
     )
     parser.add_argument(
