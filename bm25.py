@@ -69,9 +69,7 @@ class BM25:
             scores_array = bm25.get_scores(tokenized_query)
 
             # Map each (title, idx) to its score
-            query_id = item.get("_id") or item.get(
-                "id"
-            )  # HotpotQA uses '_id', MuSiQue uses 'id'
+            query_id = item.get("id")  # Try 'id' first, then '_id' as fallback
             self.scores[query_id] = {
                 doc_id: score for doc_id, score in zip(doc_ids, scores_array)
             }
@@ -141,6 +139,7 @@ def evaluate(gold, pred):
 
     return prec, recall, f1
 
+
 def calculate_metrics(golds, preds):
     all_prec, all_recall, all_f1 = 0.0, 0.0, 0.0
     count = 0
@@ -158,6 +157,7 @@ def calculate_metrics(golds, preds):
         return 0.0, 0.0, 0.0
     return all_prec / count, all_recall / count, all_f1 / count
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -170,7 +170,7 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpot.json",
+        default="datasets/hotpotqa/hotpotqa.json",
         help="Path to dataset file",
     )
     parser.add_argument(
@@ -182,10 +182,16 @@ def main():
 
     # Extract gold supporting facts based on dataset type
     if args.dataset_type in ["hotpotqa", "triviaqa"]:
-        golds = {
-            item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
-            for item in dataset
-        }
+        golds = {}
+        for item in dataset:
+            golds[item["id"]] = [
+                (title, sent_id)
+                for title, sent_id in zip(
+                    item["supporting_facts"]["title"],
+                    item["supporting_facts"]["sent_id"],
+                )
+            ]
+
     elif args.dataset_type == "musique":
         golds = {
             item["id"]: [

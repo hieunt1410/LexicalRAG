@@ -87,9 +87,7 @@ class BaseRAG:
             query_embedding = query_embedding / query_embedding.norm()
 
             scores = torch.matmul(query_embedding, corpus_embeddings.T)
-            query_id = item.get("_id") or item.get(
-                "id"
-            )  # HotpotQA uses '_id', MuSiQue uses 'id'
+            query_id = item.get("id")
             self.scores[query_id] = {
                 doc_id: score.item() for doc_id, score in zip(doc_ids, scores)
             }
@@ -142,7 +140,7 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpot.json",
+        default="datasets/hotpotqa/hotpotqa.json",
         help="Path to dataset file",
     )
     parser.add_argument(
@@ -163,10 +161,15 @@ def main():
 
     # Extract gold supporting facts based on dataset type
     if args.dataset_type in ["hotpotqa", "triviaqa"]:
-        golds = {
-            item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
-            for item in dataset
-        }
+        golds = {}
+        for item in dataset:
+            golds[item["id"]] = [
+                (title, sent_id)
+                for title, sent_id in zip(
+                    item["supporting_facts"]["title"],
+                    item["supporting_facts"]["sent_id"],
+                )
+            ]
     elif args.dataset_type == "musique":
         golds = {
             item["id"]: [
