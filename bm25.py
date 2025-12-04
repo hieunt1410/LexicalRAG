@@ -1,7 +1,21 @@
-import json
 import argparse
+import json
+import re
+
 from rank_bm25 import BM25Okapi
 
+
+def normalize_entity_name(entity):
+    """
+    Remove disambiguators from entity names.
+    Examples:
+        "Ed Wood (film)" -> "Ed Wood"
+        "Deliver Us from Evil (2014 film)" -> "Deliver Us from Evil"
+        "Scott Derrickson" -> "Scott Derrickson" (unchanged)
+    """
+    # Remove parenthetical disambiguators at the end
+    entity = re.sub(r'\s*\([^)]*\)\s*$', '', entity)
+    return entity.strip()
 
 class BM25:
     def __init__(self, dataset, dataset_type="hotpotqa"):
@@ -69,7 +83,7 @@ class BM25:
             scores_array = bm25.get_scores(tokenized_query)
 
             # Map each (title, idx) to its score
-            query_id = item.get("id")  # Try 'id' first, then '_id' as fallback
+            query_id = item.get("_id")  # Try 'id' first, then '_id' as fallback
             self.scores[query_id] = {
                 doc_id: score for doc_id, score in zip(doc_ids, scores_array)
             }
@@ -100,39 +114,21 @@ def load_dataset(dataset_path, dataset_type="hotpotqa"):
             raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
-def equals(a, b):
-    if a[0] in b[0] or b[0] in a[0]:
-        if a[1] == b[1]:
-            return True
-    return False
-
-
 def evaluate(gold, pred):
+    cur_sp_pred = set(map(tuple, pred))
+    gold_sp_pred = set(map(tuple, gold))
+    gold_sp_pred = set((normalize_entity_name(title), sent_id) for title, sent_id in gold_sp_pred)
+    cur_sp_pred = set((normalize_entity_name(title), sent_id) for title, sent_id in cur_sp_pred)
+
     tp, fp, fn = 0, 0, 0
-
-    for pred_elem in pred:
-        matched = False
-        for gold_elem in gold:
-            if equals(pred_elem, gold_elem):
-                matched = True
-                break  # Found a match, stop searching
-
-        if matched:
+    for e in cur_sp_pred:
+        if e in gold_sp_pred:
             tp += 1
         else:
             fp += 1
-
-    # Count FN
-    for gold_elem in gold:
-        matched = False
-        for pred_elem in pred:
-            if equals(gold_elem, pred_elem):
-                matched = True
-                break  # Found a match, stop searching
-
-        if not matched:
+    for e in gold_sp_pred:
+        if e not in cur_sp_pred:
             fn += 1
-
     prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
     recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
     f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
@@ -184,12 +180,9 @@ def main():
     if args.dataset_type in ["hotpotqa", "triviaqa"]:
         golds = {}
         for item in dataset:
-            golds[item["id"]] = [
+            golds[item["_id"]] = [
                 (title, sent_id)
-                for title, sent_id in zip(
-                    item["supporting_facts"]["title"],
-                    item["supporting_facts"]["sent_id"],
-                )
+                for title, sent_id in item["supporting_facts"]
             ]
 
     elif args.dataset_type == "musique":
