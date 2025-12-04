@@ -4,7 +4,7 @@ from typing import List
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 
-from bm25 import load_dataset, evaluate
+from bm25 import load_dataset, calculate_metrics
 from config.config import EMBEDDING_MODEL, EMBEDDING_BATCH_SIZE
 from config.config import RERANKER_MODEL
 
@@ -181,7 +181,7 @@ def main():
     scores = base_rag.get_scores()
     top_k_scores = get_top_k_scores(scores, args.top_k)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
-    prec, recall, f1 = evaluate(golds, preds)
+    prec, recall, f1 = calculate_metrics(golds, preds)
     print("Metrics before rerank:")
     print(f"Precision: {prec}, Recall: {recall}, F1: {f1}")
     print("--------------------------------")
@@ -209,7 +209,7 @@ def main():
 
     # Extract just the document IDs for evaluation
     preds = {key: [v[0] for v in value] for key, value in final_scores.items()}
-    prec, recall, f1 = evaluate(golds, preds)
+    prec, recall, f1 = calculate_metrics(golds, preds)
     print("Metrics after rerank:")
     print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
     print("--------------------------------")

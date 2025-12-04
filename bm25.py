@@ -109,36 +109,31 @@ def equals(a, b):
     return False
 
 
-def evaluate(golds, preds):
+def evaluate(gold, pred):
     tp, fp, fn = 0, 0, 0
 
-    for key in preds.keys():
-        cur_sp_pred = preds[key]
-        gold_sp_pred = golds[key]
+    for pred_elem in pred:
+        matched = False
+        for gold_elem in gold:
+            if equals(pred_elem, gold_elem):
+                matched = True
+                break  # Found a match, stop searching
 
-        # Count TP and FP
-        for pred_elem in cur_sp_pred:
-            matched = False
-            for gold_elem in gold_sp_pred:
-                if equals(pred_elem, gold_elem):
-                    matched = True
-                    break  # Found a match, stop searching
+        if matched:
+            tp += 1
+        else:
+            fp += 1
 
-            if matched:
-                tp += 1
-            else:
-                fp += 1
+    # Count FN
+    for gold_elem in gold:
+        matched = False
+        for pred_elem in pred:
+            if equals(gold_elem, pred_elem):
+                matched = True
+                break  # Found a match, stop searching
 
-        # Count FN
-        for gold_elem in gold_sp_pred:
-            matched = False
-            for pred_elem in cur_sp_pred:
-                if equals(gold_elem, pred_elem):
-                    matched = True
-                    break  # Found a match, stop searching
-
-            if not matched:
-                fn += 1
+        if not matched:
+            fn += 1
 
     prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
     recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
@@ -146,6 +141,22 @@ def evaluate(golds, preds):
 
     return prec, recall, f1
 
+def calculate_metrics(golds, preds):
+    all_prec, all_recall, all_f1 = 0.0, 0.0, 0.0
+    count = 0
+    for cur_id in golds.keys():
+        if cur_id in preds:
+            prec, recall, f1 = evaluate(
+                golds[cur_id],
+                preds[cur_id],
+            )
+            all_prec += prec
+            all_recall += recall
+            all_f1 += f1
+            count += 1
+    if count == 0:
+        return 0.0, 0.0, 0.0
+    return all_prec / count, all_recall / count, all_f1 / count
 
 def main():
     parser = argparse.ArgumentParser()
@@ -188,7 +199,7 @@ def main():
     bm25 = BM25(dataset, args.dataset_type)
     top_k_scores = bm25.get_scores(top_k=args.top_k)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
-    prec, recall, f1 = evaluate(golds, preds)
+    prec, recall, f1 = calculate_metrics(golds, preds)
     print(f"Dataset: {args.dataset_type}")
     print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
 
