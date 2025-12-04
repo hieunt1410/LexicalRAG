@@ -10,8 +10,7 @@ from config.config import RERANKER_MODEL
 
 
 class BaseRAG:
-
-    def __init__(self, dataset, dataset_type='hotpotqa'):
+    def __init__(self, dataset, dataset_type="hotpotqa"):
         self.dataset = dataset
         self.dataset_type = dataset_type
         self.embedding_model = SentenceTransformer(EMBEDDING_MODEL)
@@ -22,22 +21,22 @@ class BaseRAG:
     def setup(self):
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
-        
-        if self.dataset_type == 'hotpotqa':
-            # HotpotQA format: context is [title, [sentences]]
+
+        if self.dataset_type in ["hotpotqa", "triviaqa"]:
+            # HotpotQA and TriviaQA format: context is [title, [sentences]]
             for item in self.dataset:
                 for ctx in item["context"]:
                     title = ctx[0]
                     for idx, ct in enumerate(ctx[1]):
                         self.hash_id_to_text[(title, idx)] = ct
                         self.text_to_hash_id[ct] = (title, idx)
-        elif self.dataset_type == 'musique':
+        elif self.dataset_type == "musique":
             # MuSiQue format: paragraphs is list of {idx, title, paragraph_text}
             for item in self.dataset:
-                for para in item['paragraphs']:
-                    title = para['title']
-                    idx = para['idx']
-                    text = para['paragraph_text']
+                for para in item["paragraphs"]:
+                    title = para["title"]
+                    idx = para["idx"]
+                    text = para["paragraph_text"]
                     self.hash_id_to_text[(title, idx)] = text
                     self.text_to_hash_id[text] = (title, idx)
 
@@ -57,56 +56,62 @@ class BaseRAG:
 
     def get_scores(self):
         self.scores = {}
-        for item in self.dataset:
-            query_embedding = self.encoder_single(item["question"])
-            corpus = []
-            doc_ids = []  # Store (title, idx) for each document
+        corpus = []
+        doc_ids = []
 
-            if self.dataset_type == 'hotpotqa':
-                # HotpotQA format
+        for item in self.dataset:
+            if self.dataset_type in ["hotpotqa", "triviaqa"]:
+                # HotpotQA and TriviaQA format
                 for ctx in item["context"]:
                     title = ctx[0]
                     for idx, ct in enumerate(ctx[1]):
                         corpus.append(ct)
                         doc_ids.append((title, idx))
-            elif self.dataset_type == 'musique':
+            elif self.dataset_type == "musique":
                 # MuSiQue format
-                for para in item['paragraphs']:
-                    title = para['title']
-                    idx = para['idx']
-                    text = para['paragraph_text']
+                for para in item["paragraphs"]:
+                    title = para["title"]
+                    idx = para["idx"]
+                    text = para["paragraph_text"]
                     corpus.append(text)
                     doc_ids.append((title, idx))
 
-            corpus_embeddings = self.encode_batch(corpus)
-            # Normalize embeddings for cosine similarity
+        corpus_embeddings = self.encode_batch(corpus)
+        # Normalize embeddings for cosine similarity
+        corpus_embeddings = corpus_embeddings / corpus_embeddings.norm(
+            dim=1, keepdim=True
+        )
+        for item in self.dataset:
+            query_embedding = self.encoder_single(item["question"])
+
             query_embedding = query_embedding / query_embedding.norm()
-            corpus_embeddings = corpus_embeddings / corpus_embeddings.norm(
-                dim=1, keepdim=True
-            )
+
             scores = torch.matmul(query_embedding, corpus_embeddings.T)
-            query_id = item.get('_id') or item.get('id')  # HotpotQA uses '_id', MuSiQue uses 'id'
+            query_id = item.get("_id") or item.get(
+                "id"
+            )  # HotpotQA uses '_id', MuSiQue uses 'id'
             self.scores[query_id] = {
                 doc_id: score.item() for doc_id, score in zip(doc_ids, scores)
             }
         print(f"Processed {len(self.scores)} queries")
         return self.scores
 
-
     def rerank(self, scores):
         """
         Rerank top-k documents using cross-encoder.
-        
+
         Args:
             scores: Dict of {query_id: [(doc_id, score), ...]}
         """
         reranked_scores = {}
         for item in self.dataset:
-            query_id = item.get("_id") or item.get("id")  # Handle both HotpotQA and MuSiQue
+            query_id = item.get("_id") or item.get(
+                "id"
+            )  # Handle both HotpotQA and MuSiQue
             query = item["question"]
             doc_ids = []
             pairs = []
-            
+
             # Build query-document pairs from top-k results
             for doc_id, _ in scores[query_id]:
                 pairs.append([query, self.hash_id_to_text[doc_id]])
@@ -117,14 +122,13 @@ class BaseRAG:
             }
         return reranked_scores
 
+
 def get_top_k_scores(scores, top_k=10):
     return {
-        item: sorted(scores[item].items(), key=lambda x: x[1], reverse=True)[
-            :top_k
-        ]
+        item: sorted(scores[item].items(), key=lambda x: x[1], reverse=True)[:top_k]
         for item in scores
     }
-    
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -132,43 +136,47 @@ def main():
         "--dataset_type",
         type=str,
         default="hotpotqa",
-        choices=['hotpotqa', 'musique'],
-        help="Dataset format type"
+        choices=["hotpotqa", "musique", "triviaqa"],
+        help="Dataset format type",
     )
     parser.add_argument(
         "--dataset_path",
         type=str,
         default="datasets/hotpotqa/hotpot_dev_fullwiki_v1_100.json",
-        help="Path to dataset file"
+        help="Path to dataset file",
     )
     parser.add_argument(
         "--top_k",
         type=int,
         default=10,
-        help="Number of documents to retrieve in initial search"
+        help="Number of documents to retrieve in initial search",
     )
     parser.add_argument(
         "--top_k_rerank",
         type=int,
         default=10,
-        help="Number of documents to keep after reranking"
+        help="Number of documents to keep after reranking",
     )
     args = parser.parse_args()
 
     dataset = load_dataset(args.dataset_path, args.dataset_type)
-    
+
     # Extract gold supporting facts based on dataset type
-    if args.dataset_type == 'hotpotqa':
+    if args.dataset_type in ["hotpotqa", "triviaqa"]:
         golds = {
             item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
             for item in dataset
         }
-    elif args.dataset_type == 'musique':
+    elif args.dataset_type == "musique":
         golds = {
-            item["id"]: [(para["title"], para["idx"]) for para in item["paragraphs"] if para["is_supporting"]]
+            item["id"]: [
+                (para["title"], para["idx"])
+                for para in item["paragraphs"]
+                if para["is_supporting"]
+            ]
             for item in dataset
         }
-    
+
     base_rag = BaseRAG(dataset, args.dataset_type)
     scores = base_rag.get_scores()
     top_k_scores = get_top_k_scores(scores, args.top_k)
@@ -177,10 +185,10 @@ def main():
     print("Metrics before rerank:")
     print(f"Precision: {prec}, Recall: {recall}, F1: {f1}")
     print("--------------------------------")
-    
+
     # Rerank using top-k results
     reranked_scores = base_rag.rerank(top_k_scores)
-    
+
     # Combine initial retrieval scores with reranker scores
     final_scores = {}
     for key in top_k_scores.keys():
@@ -197,7 +205,7 @@ def main():
         # Sort by combined scores
         final_scores[key] = sorted(
             combined_scores.items(), key=lambda x: x[1], reverse=True
-        )[:args.top_k_rerank]
+        )[: args.top_k_rerank]
 
     # Extract just the document IDs for evaluation
     preds = {key: [v[0] for v in value] for key, value in final_scores.items()}

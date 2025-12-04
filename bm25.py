@@ -13,8 +13,8 @@ class BM25:
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
 
-        if self.dataset_type == "hotpotqa":
-            # HotpotQA format: context is [title, [sentences]]
+        if self.dataset_type in ["hotpotqa", "triviaqa"]:
+            # HotpotQA and TriviaQA format: context is [title, [sentences]]
             for item in self.dataset:
                 for ctx in item["context"]:
                     title = ctx[0]
@@ -33,13 +33,13 @@ class BM25:
 
     def get_scores(self, top_k=10):
         self.scores = {}
+        corpus = []
+        doc_ids = []
         for item in self.dataset:
             query = item["question"]
-            corpus = []
-            doc_ids = []  # Store (title, idx) for each document
 
-            if self.dataset_type == "hotpotqa":
-                # HotpotQA format
+            if self.dataset_type in ["hotpotqa", "triviaqa"]:
+                # HotpotQA and TriviaQA format
                 for ctx in item["context"]:
                     title = ctx[0]
                     for idx, ct in enumerate(ctx[1]):
@@ -54,9 +54,15 @@ class BM25:
                     corpus.append(text)
                     doc_ids.append((title, idx))
 
-            # Tokenize corpus
-            tokenized_corpus = [doc.split() for doc in corpus]
-            bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_corpus = [doc.split() for doc in corpus]
+
+        bm25 = BM25Okapi(tokenized_corpus)
+
+        for item in self.dataset:
+            query = item["question"]
+            # Skip items with empty corpus
+            if not tokenized_corpus:
+                continue
 
             # Tokenize query and get scores
             tokenized_query = query.split()
@@ -83,11 +89,11 @@ def load_dataset(dataset_path, dataset_type="hotpotqa"):
 
     Args:
         dataset_path: Path to dataset file
-        dataset_type: 'hotpotqa' for JSON format or 'musique' for JSONL format
+        dataset_type: 'hotpotqa'/'triviaqa' for JSON format or 'musique' for JSONL format
     """
     with open(dataset_path, "r") as f:
-        if dataset_type == "hotpotqa":
-            # HotpotQA: Single JSON array
+        if dataset_type in ["hotpotqa", "triviaqa"]:
+            # HotpotQA and TriviaQA: Single JSON array
             return json.load(f)
         elif dataset_type == "musique":
             # MuSiQue: JSONL format (one JSON object per line)
@@ -96,22 +102,48 @@ def load_dataset(dataset_path, dataset_type="hotpotqa"):
             raise ValueError(f"Unknown dataset type: {dataset_type}")
 
 
+def equals(a, b):
+    if a[0] in b[0] or b[0] in a[0]:
+        if a[1] == b[1]:
+            return True
+    return False
+
+
 def evaluate(golds, preds):
     tp, fp, fn = 0, 0, 0
+
     for key in preds.keys():
         cur_sp_pred = preds[key]
         gold_sp_pred = golds[key]
-        for e in cur_sp_pred:
-            if e in gold_sp_pred:
+
+        # Count TP and FP
+        for pred_elem in cur_sp_pred:
+            matched = False
+            for gold_elem in gold_sp_pred:
+                if equals(pred_elem, gold_elem):
+                    matched = True
+                    break  # Found a match, stop searching
+
+            if matched:
                 tp += 1
             else:
                 fp += 1
-        for e in gold_sp_pred:
-            if e not in cur_sp_pred:
+
+        # Count FN
+        for gold_elem in gold_sp_pred:
+            matched = False
+            for pred_elem in cur_sp_pred:
+                if equals(gold_elem, pred_elem):
+                    matched = True
+                    break  # Found a match, stop searching
+
+            if not matched:
                 fn += 1
+
     prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
     recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
     f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
+
     return prec, recall, f1
 
 
@@ -121,13 +153,13 @@ def main():
         "--dataset_type",
         type=str,
         default="hotpotqa",
-        choices=["hotpotqa", "musique"],
+        choices=["hotpotqa", "musique", "triviaqa"],
         help="Dataset format type",
     )
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpot_dev_fullwiki_v1_100.json",
+        default="datasets/hotpotqa/hotpot.json",
         help="Path to dataset file",
     )
     parser.add_argument(
@@ -138,7 +170,7 @@ def main():
     dataset = load_dataset(args.dataset_path, args.dataset_type)
 
     # Extract gold supporting facts based on dataset type
-    if args.dataset_type == "hotpotqa":
+    if args.dataset_type in ["hotpotqa", "triviaqa"]:
         golds = {
             item["_id"]: [(sps[0], sps[1]) for sps in item["supporting_facts"]]
             for item in dataset
