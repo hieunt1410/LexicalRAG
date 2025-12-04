@@ -163,13 +163,11 @@ def main():
     if args.dataset_type in ["hotpotqa", "triviaqa"]:
         golds = {}
         for item in dataset:
-            golds[item["id"]] = [
+            golds[item["_id"]] = [
                 (title, sent_id)
-                for title, sent_id in zip(
-                    item["supporting_facts"]["title"],
-                    item["supporting_facts"]["sent_id"],
-                )
+                for title, sent_id in item["supporting_facts"]
             ]
+
     elif args.dataset_type == "musique":
         golds = {
             item["id"]: [
