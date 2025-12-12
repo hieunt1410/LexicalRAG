@@ -14,8 +14,9 @@ def normalize_entity_name(entity):
         "Scott Derrickson" -> "Scott Derrickson" (unchanged)
     """
     # Remove parenthetical disambiguators at the end
-    entity = re.sub(r'\s*\([^)]*\)\s*$', '', entity)
+    entity = re.sub(r"\s*\([^)]*\)\s*$", "", entity)
     return entity.strip()
+
 
 class BM25:
     def __init__(self, dataset, dataset_type="hotpotqa"):
@@ -117,8 +118,12 @@ def load_dataset(dataset_path, dataset_type="hotpotqa"):
 def evaluate(gold, pred):
     cur_sp_pred = set(map(tuple, pred))
     gold_sp_pred = set(map(tuple, gold))
-    gold_sp_pred = set((normalize_entity_name(title), sent_id) for title, sent_id in gold_sp_pred)
-    cur_sp_pred = set((normalize_entity_name(title), sent_id) for title, sent_id in cur_sp_pred)
+    gold_sp_pred = set(
+        (normalize_entity_name(title), sent_id) for title, sent_id in gold_sp_pred
+    )
+    cur_sp_pred = set(
+        (normalize_entity_name(title), sent_id) for title, sent_id in cur_sp_pred
+    )
 
     tp, fp, fn = 0, 0, 0
     for e in cur_sp_pred:
@@ -166,7 +171,7 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpotqa.json",
+        default="datasets/hotpotqa/hotpotqa_1k.json",
         help="Path to dataset file",
     )
     parser.add_argument(
@@ -181,8 +186,7 @@ def main():
         golds = {}
         for item in dataset:
             golds[item["_id"]] = [
-                (title, sent_id)
-                for title, sent_id in item["supporting_facts"]
+                (title, sent_id) for title, sent_id in item["supporting_facts"]
             ]
 
     elif args.dataset_type == "musique":
@@ -198,6 +202,10 @@ def main():
     bm25 = BM25(dataset, args.dataset_type)
     top_k_scores = bm25.get_scores(top_k=args.top_k)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
+
+    with open("bm25_predictions.json", "w") as f:
+        json.dump(preds, f, indent=2, ensure_ascii=False)
+
     prec, recall, f1 = calculate_metrics(golds, preds)
     print(f"Dataset: {args.dataset_type}")
     print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")

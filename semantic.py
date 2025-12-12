@@ -1,4 +1,5 @@
 import argparse
+import json
 import torch
 from typing import List
 from sentence_transformers import SentenceTransformer
@@ -87,7 +88,11 @@ class BaseRAG:
             query_embedding = query_embedding / query_embedding.norm()
 
             scores = torch.matmul(query_embedding, corpus_embeddings.T)
-            query_id = item.get("id")
+            query_id = (
+                item.get("_id")
+                if self.dataset_type in ["hotpotqa", "triviaqa"]
+                else item.get("id")
+            )
             self.scores[query_id] = {
                 doc_id: score.item() for doc_id, score in zip(doc_ids, scores)
             }
@@ -103,9 +108,11 @@ class BaseRAG:
         """
         reranked_scores = {}
         for item in self.dataset:
-            query_id = item.get("_id") or item.get(
-                "id"
-            )  # Handle both HotpotQA and MuSiQue
+            query_id = (
+                item.get("_id")
+                if self.dataset_type in ["hotpotqa", "triviaqa"]
+                else item.get("id")
+            )
             query = item["question"]
             doc_ids = []
             pairs = []
@@ -163,9 +170,8 @@ def main():
     if args.dataset_type in ["hotpotqa", "triviaqa"]:
         golds = {}
         for item in dataset:
-            golds[item["_id"]] = [
-                (title, sent_id)
-                for title, sent_id in item["supporting_facts"]
+            golds[item.get("_id", item.get("id"))] = [
+                (title, sent_id) for title, sent_id in item["supporting_facts"]
             ]
 
     elif args.dataset_type == "musique":
@@ -210,6 +216,10 @@ def main():
 
     # Extract just the document IDs for evaluation
     preds = {key: [v[0] for v in value] for key, value in final_scores.items()}
+
+    with open("lm_predictions.json", "w") as f:
+        json.dump(preds, f, indent=2, ensure_ascii=False)
+
     prec, recall, f1 = calculate_metrics(golds, preds)
     print("Metrics after rerank:")
     print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
