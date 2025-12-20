@@ -1,8 +1,17 @@
 import argparse
 import json
 import re
+import os
+import pickle
+import hashlib
+import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Tuple
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from rank_bm25 import BM25Okapi
+from tqdm import tqdm
 
 
 def normalize_entity_name(entity):
@@ -19,82 +28,296 @@ def normalize_entity_name(entity):
 
 
 class BM25:
-    def __init__(self, dataset, dataset_type="hotpotqa"):
-        self.dataset = dataset
+    def __init__(self, corpus, dataset_type="hotpotqa", cache_dir="cache", use_cache=True, n_workers=4):
+        self.corpus = corpus
         self.dataset_type = dataset_type
+        self.cache_dir = cache_dir
+        self.use_cache = use_cache
+        self.n_workers = n_workers
+        self.bm25_model = None
+        self.corpus = []
+        self.doc_ids = []
         self.setup()
 
     def setup(self):
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
+        seen_texts = set()  # Track unique documents to avoid duplicates
 
-        if self.dataset_type in ["hotpotqa", "triviaqa"]:
+        # Build corpus and mappings efficiently
+        if self.dataset_type in ["hotpotqa", "2wikimultihopqa"]:
             # HotpotQA and TriviaQA format: context is [title, [sentences]]
-            for item in self.dataset:
-                for ctx in item["context"]:
-                    title = ctx[0]
-                    for idx, ct in enumerate(ctx[1]):
-                        self.hash_id_to_text[(title, idx)] = ct
-                        self.text_to_hash_id[ct] = (title, idx)
+            for item in self.corpus:
+                for ctx in item:
+                    if ctx not in seen_texts:
+                        self.hash_id_to_text[ctx] = ctx
+                        self.text_to_hash_id[ctx] = ctx
+                        self.corpus.append(ctx)
+                        self.doc_ids.append(ctx)
+                        seen_texts.add(ctx)
         elif self.dataset_type == "musique":
             # MuSiQue format: paragraphs is list of {idx, title, paragraph_text}
+            for item in self.corpus:
+                for para in item:
+                    if para not in seen_texts:
+                        self.hash_id_to_text[para] = para
+                        self.text_to_hash_id[para] = para
+                        self.corpus.append(para)
+                        self.doc_ids.append(para)
+                        seen_texts.add(para)
+
+        print(f"Built corpus with {len(self.corpus)} unique documents")
+
+    def _get_cache_path(self):
+        """Generate cache file path based on corpus hash."""
+        if not self.use_cache:
+            return None
+
+        # Create hash from corpus content for cache key
+        corpus_str = "".join(self.corpus[:100])  # Use first 100 docs for hashing
+        corpus_hash = hashlib.md5(corpus_str.encode()).hexdigest()[:8]
+        cache_path = os.path.join(self.cache_dir, f"bm25_{self.dataset_type}_{corpus_hash}.pkl")
+
+        # Ensure cache directory exists
+        os.makedirs(self.cache_dir, exist_ok=True)
+        return cache_path
+
+    def _build_or_load_bm25(self):
+        """Build BM25 model or load from cache."""
+        if self.bm25_model is not None:
+            return
+
+        cache_path = self._get_cache_path()
+
+        # Try to load from cache
+        if cache_path and os.path.exists(cache_path):
+            print(f"Loading BM25 model from cache: {cache_path}")
+            try:
+                with open(cache_path, 'rb') as f:
+                    self.bm25_model = pickle.load(f)
+                return
+            except Exception as e:
+                print(f"Failed to load from cache: {e}")
+
+        # Build new BM25 model
+        print("Building BM25 index...")
+        tokenized_corpus = [doc.split() for doc in tqdm(self.corpus)]
+        self.bm25_model = BM25Okapi(tokenized_corpus)
+
+        # Save to cache
+        if cache_path:
+            print(f"Caching BM25 model to: {cache_path}")
+            try:
+                with open(cache_path, 'wb') as f:
+                    pickle.dump(self.bm25_model, f)
+            except Exception as e:
+                print(f"Failed to save to cache: {e}")
+
+    def _process_single_query(self, query, query_id, top_k):
+        """Process a single query and return top-k results."""
+        tokenized_query = query.split()
+        scores_array = self.bm25_model.get_scores(tokenized_query)
+
+        # Use argpartition for O(n) selection instead of O(n log n) sort
+        if len(scores_array) > top_k:
+            # Get indices of top-k scores efficiently
+            top_indices = np.argpartition(scores_array, -top_k)[-top_k:]
+            # Sort only the top-k results
+            top_indices = top_indices[np.argsort(scores_array[top_indices])[::-1]]
+        else:
+            top_indices = np.argsort(scores_array)[::-1]
+
+        return query_id, [
+            (self.doc_ids[idx], float(scores_array[idx]))
+            for idx in top_indices
+        ]
+
+    def get_scores(self, top_k=10):
+        """Get BM25 scores with parallel processing."""
+        self.scores = {}
+
+        # Build or load BM25 model once
+        self._build_or_load_bm25()
+
+        # Prepare queries and IDs
+        queries = []
+        query_ids = []
+        for item in self.dataset:
+            query = item["question"]
+            query_id = item.get("_id", item.get("id"))
+            queries.append(query)
+            query_ids.append(query_id)
+
+        # Process queries in parallel
+        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+            # Submit all tasks
+            future_to_query = {
+                executor.submit(self._process_single_query, query, query_id, top_k): query_id
+                for query, query_id in zip(queries, query_ids)
+            }
+
+            # Collect results with progress bar
+            for future in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Processing queries"):
+                query_id, results = future.result()
+                self.scores[query_id] = results
+
+        print(f"Processed {len(self.scores)} queries")
+        return self.scores
+
+
+class TFIDF:
+    """TF-IDF search implementation with caching and parallel processing."""
+
+    def __init__(self, dataset, dataset_type="hotpotqa", cache_dir="cache", use_cache=True, n_workers=4):
+        self.dataset = dataset
+        self.dataset_type = dataset_type
+        self.cache_dir = cache_dir
+        self.use_cache = use_cache
+        self.n_workers = n_workers
+        self.tfidf_vectorizer = None
+        self.tfidf_matrix = None
+        self.corpus = []
+        self.doc_ids = []
+        self.setup()
+
+    def setup(self):
+        """Setup corpus and document IDs."""
+        self.hash_id_to_text = {}
+        self.text_to_hash_id = {}
+        seen_texts = set()
+
+        # Build corpus and mappings efficiently
+        if self.dataset_type in ["hotpotqa", "triviaqa"]:
+            for item in self.dataset:
+                for ctx in item["context"]:
+                    title = ctx[0]
+                    for idx, ct in enumerate(ctx[1]):
+                        if ct not in seen_texts:
+                            self.hash_id_to_text[(title, idx)] = ct
+                            self.text_to_hash_id[ct] = (title, idx)
+                            self.corpus.append(ct)
+                            self.doc_ids.append((title, idx))
+                            seen_texts.add(ct)
+        elif self.dataset_type == "musique":
             for item in self.dataset:
                 for para in item["paragraphs"]:
                     title = para["title"]
                     idx = para["idx"]
                     text = para["paragraph_text"]
-                    self.hash_id_to_text[(title, idx)] = text
-                    self.text_to_hash_id[text] = (title, idx)
+                    if text not in seen_texts:
+                        self.hash_id_to_text[(title, idx)] = text
+                        self.text_to_hash_id[text] = (title, idx)
+                        self.corpus.append(text)
+                        self.doc_ids.append((title, idx))
+                        seen_texts.add(text)
+
+        print(f"Built corpus with {len(self.corpus)} unique documents")
+
+    def _get_cache_path(self):
+        """Generate cache file path based on corpus hash."""
+        if not self.use_cache:
+            return None
+
+        corpus_str = "".join(self.corpus[:100])
+        corpus_hash = hashlib.md5(corpus_str.encode()).hexdigest()[:8]
+        cache_path = os.path.join(self.cache_dir, f"tfidf_{self.dataset_type}_{corpus_hash}.pkl")
+
+        os.makedirs(self.cache_dir, exist_ok=True)
+        return cache_path
+
+    def _build_or_load_tfidf(self):
+        """Build TF-IDF model or load from cache."""
+        if self.tfidf_vectorizer is not None:
+            return
+
+        cache_path = self._get_cache_path()
+
+        # Try to load from cache
+        if cache_path and os.path.exists(cache_path):
+            print(f"Loading TF-IDF model from cache: {cache_path}")
+            try:
+                with open(cache_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.tfidf_vectorizer = data['vectorizer']
+                    self.tfidf_matrix = data['matrix']
+                return
+            except Exception as e:
+                print(f"Failed to load from cache: {e}")
+
+        # Build new TF-IDF model
+        print("Building TF-IDF index...")
+        self.tfidf_vectorizer = TfidfVectorizer(
+            max_features=50000,  # Limit vocabulary size for memory efficiency
+            stop_words='english',
+            ngram_range=(1, 2),  # Use unigrams and bigrams
+            min_df=2,  # Ignore terms that appear in less than 2 documents
+            max_df=0.95  # Ignore terms that appear in more than 95% of documents
+        )
+
+        self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(tqdm(self.corpus, desc="Vectorizing documents"))
+
+        # Save to cache
+        if cache_path:
+            print(f"Caching TF-IDF model to: {cache_path}")
+            try:
+                with open(cache_path, 'wb') as f:
+                    pickle.dump({
+                        'vectorizer': self.tfidf_vectorizer,
+                        'matrix': self.tfidf_matrix
+                    }, f)
+            except Exception as e:
+                print(f"Failed to save to cache: {e}")
+
+    def _process_single_query(self, query, query_id, top_k):
+        """Process a single query and return top-k results."""
+        # Transform query to TF-IDF space
+        query_vec = self.tfidf_vectorizer.transform([query])
+
+        # Calculate cosine similarity
+        similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+
+        # Use argpartition for O(n) selection
+        if len(similarities) > top_k:
+            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+        else:
+            top_indices = np.argsort(similarities)[::-1]
+
+        return query_id, [
+            (self.doc_ids[idx], float(similarities[idx]))
+            for idx in top_indices
+        ]
 
     def get_scores(self, top_k=10):
+        """Get TF-IDF scores with parallel processing."""
         self.scores = {}
-        corpus = []
-        doc_ids = []
+
+        # Build or load TF-IDF model once
+        self._build_or_load_tfidf()
+
+        # Prepare queries and IDs
+        queries = []
+        query_ids = []
         for item in self.dataset:
             query = item["question"]
+            query_id = item.get("_id", item.get("id"))
+            queries.append(query)
+            query_ids.append(query_id)
 
-            if self.dataset_type in ["hotpotqa", "triviaqa"]:
-                # HotpotQA and TriviaQA format
-                for ctx in item["context"]:
-                    title = ctx[0]
-                    for idx, ct in enumerate(ctx[1]):
-                        corpus.append(ct)
-                        doc_ids.append((title, idx))
-            elif self.dataset_type == "musique":
-                # MuSiQue format
-                for para in item["paragraphs"]:
-                    title = para["title"]
-                    idx = para["idx"]
-                    text = para["paragraph_text"]
-                    corpus.append(text)
-                    doc_ids.append((title, idx))
-
-        tokenized_corpus = [doc.split() for doc in corpus]
-
-        bm25 = BM25Okapi(tokenized_corpus)
-
-        for item in self.dataset:
-            query = item["question"]
-            # Skip items with empty corpus
-            if not tokenized_corpus:
-                continue
-
-            # Tokenize query and get scores
-            tokenized_query = query.split()
-            scores_array = bm25.get_scores(tokenized_query)
-
-            # Map each (title, idx) to its score
-            query_id = item.get("_id")  # Try 'id' first, then '_id' as fallback
-            self.scores[query_id] = {
-                doc_id: score for doc_id, score in zip(doc_ids, scores_array)
+        # Process queries in parallel
+        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+            future_to_query = {
+                executor.submit(self._process_single_query, query, query_id, top_k): query_id
+                for query, query_id in zip(queries, query_ids)
             }
+
+            # Collect results with progress bar
+            for future in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Processing queries"):
+                query_id, results = future.result()
+                self.scores[query_id] = results
+
         print(f"Processed {len(self.scores)} queries")
-        top_k_scores = {}
-        for item in self.scores:
-            top_k_scores[item] = sorted(
-                self.scores[item].items(), key=lambda x: x[1], reverse=True
-            )[:top_k]
-        return top_k_scores
+        return self.scores
 
 
 def load_dataset(dataset_path, dataset_type="hotpotqa"):
@@ -104,15 +327,15 @@ def load_dataset(dataset_path, dataset_type="hotpotqa"):
         dataset_path: Path to dataset file
         dataset_type: 'hotpotqa'/'triviaqa' for JSON format or 'musique' for JSONL format
     """
-    with open(dataset_path, "r") as f:
-        if dataset_type in ["hotpotqa", "triviaqa"]:
-            # HotpotQA and TriviaQA: Single JSON array
-            return json.load(f)
-        elif dataset_type == "musique":
-            # MuSiQue: JSONL format (one JSON object per line)
-            return [json.loads(line) for line in f]
-        else:
-            raise ValueError(f"Unknown dataset type: {dataset_type}")
+    questions, corpus, facts = [], [], []
+    with open(dataset_path + "/questions.json", "r") as f:
+        questions = json.load(f)
+    with open(dataset_path + "/corpus.json", "r") as f:
+        corpus = json.load(f)
+    with open(dataset_path + "/facts.json", "r") as f:
+        facts = json.load(f)
+
+    return questions, corpus, facts
 
 
 def evaluate(gold, pred):
@@ -162,6 +385,13 @@ def calculate_metrics(golds, preds):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--search_method",
+        type=str,
+        default="bm25",
+        choices=["bm25", "tfidf"],
+        help="Search method to use",
+    )
+    parser.add_argument(
         "--dataset_type",
         type=str,
         default="hotpotqa",
@@ -177,14 +407,23 @@ def main():
     parser.add_argument(
         "--top_k", type=int, default=10, help="Number of documents to retrieve"
     )
+    parser.add_argument(
+        "--cache_dir", type=str, default="cache", help="Directory for caching models"
+    )
+    parser.add_argument(
+        "--no_cache", action="store_true", help="Disable caching"
+    )
+    parser.add_argument(
+        "--n_workers", type=int, default=4, help="Number of worker threads"
+    )
     args = parser.parse_args()
 
-    dataset = load_dataset(args.dataset_path, args.dataset_type)
+    questions, corpus, facts = load_dataset(args.dataset_path, args.dataset_type)
 
     # Extract gold supporting facts based on dataset type
-    if args.dataset_type in ["hotpotqa", "triviaqa"]:
+    if args.dataset_type in ["hotpotqa", "2wikimultihopqa"]:
         golds = {}
-        for item in dataset:
+        for item in facts:
             golds[item["_id"]] = [
                 (title, sent_id) for title, sent_id in item["supporting_facts"]
             ]
@@ -196,19 +435,44 @@ def main():
                 for para in item["paragraphs"]
                 if para["is_supporting"]
             ]
-            for item in dataset
+            for item in facts
         }
 
-    bm25 = BM25(dataset, args.dataset_type)
-    top_k_scores = bm25.get_scores(top_k=args.top_k)
+    # Initialize searcher based on method
+    use_cache = not args.no_cache
+    if args.search_method == "bm25":
+        print(f"Using BM25 search with {args.n_workers} workers")
+        searcher = BM25(
+            corpus,
+            args.dataset_type,
+            cache_dir=args.cache_dir,
+            use_cache=use_cache,
+            n_workers=args.n_workers
+        )
+    elif args.search_method == "tfidf":
+        print(f"Using TF-IDF search with {args.n_workers} workers")
+        searcher = TFIDF(
+            corpus,
+            args.dataset_type,
+            cache_dir=args.cache_dir,
+            use_cache=use_cache,
+            n_workers=args.n_workers
+        )
+
+    # Get scores
+    top_k_scores = searcher.get_scores(top_k=args.top_k)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
 
-    with open("bm25_predictions.json", "w") as f:
+    # Save predictions
+    output_file = f"{args.search_method}_predictions.json"
+    with open(output_file, "w") as f:
         json.dump(preds, f, indent=2, ensure_ascii=False)
 
     prec, recall, f1 = calculate_metrics(golds, preds)
-    print(f"Dataset: {args.dataset_type}")
+    print(f"\nDataset: {args.dataset_type}")
+    print(f"Search Method: {args.search_method.upper()}")
     print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+    print(f"Predictions saved to: {output_file}")
 
 
 if __name__ == "__main__":
