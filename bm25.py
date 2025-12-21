@@ -28,43 +28,51 @@ def normalize_entity_name(entity):
 
 
 class BM25:
-    def __init__(self, corpus, dataset_type="hotpotqa", cache_dir="cache", use_cache=True, n_workers=4):
+    def __init__(
+        self,
+        questions,
+        corpus,
+        dataset_type="hotpotqa",
+        cache_dir="cache",
+        use_cache=True,
+        n_workers=4,
+    ):
+        self.questions = questions
         self.corpus = corpus
         self.dataset_type = dataset_type
         self.cache_dir = cache_dir
         self.use_cache = use_cache
         self.n_workers = n_workers
         self.bm25_model = None
-        self.corpus = []
         self.doc_ids = []
         self.setup()
 
     def setup(self):
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
-        seen_texts = set()  # Track unique documents to avoid duplicates
 
         # Build corpus and mappings efficiently
         if self.dataset_type in ["hotpotqa", "2wikimultihopqa"]:
-            # HotpotQA and TriviaQA format: context is [title, [sentences]]
+            # HotpotQA format: context is [title, [sentences]]
             for item in self.corpus:
-                for ctx in item:
-                    if ctx not in seen_texts:
-                        self.hash_id_to_text[ctx] = ctx
-                        self.text_to_hash_id[ctx] = ctx
-                        self.corpus.append(ctx)
-                        self.doc_ids.append(ctx)
-                        seen_texts.add(ctx)
+                for ctx in item["context"]:
+                    title = ctx[0]
+                    for idx, ct in enumerate(ctx[1]):
+                        self.hash_id_to_text[(title, idx)] = ct
+                        self.text_to_hash_id[ct] = (title, idx)
+                        self.corpus.append(ct)
+                        self.doc_ids.append((title, idx))
         elif self.dataset_type == "musique":
             # MuSiQue format: paragraphs is list of {idx, title, paragraph_text}
             for item in self.corpus:
-                for para in item:
-                    if para not in seen_texts:
-                        self.hash_id_to_text[para] = para
-                        self.text_to_hash_id[para] = para
-                        self.corpus.append(para)
-                        self.doc_ids.append(para)
-                        seen_texts.add(para)
+                for para in item["paragraphs"]:
+                    title = para["title"]
+                    idx = para["idx"]
+                    text = para["paragraph_text"]
+                    self.hash_id_to_text[(title, idx)] = text
+                    self.text_to_hash_id[text] = (title, idx)
+                    self.corpus.append(text)
+                    self.doc_ids.append((title, idx))
 
         print(f"Built corpus with {len(self.corpus)} unique documents")
 
@@ -76,7 +84,9 @@ class BM25:
         # Create hash from corpus content for cache key
         corpus_str = "".join(self.corpus[:100])  # Use first 100 docs for hashing
         corpus_hash = hashlib.md5(corpus_str.encode()).hexdigest()[:8]
-        cache_path = os.path.join(self.cache_dir, f"bm25_{self.dataset_type}_{corpus_hash}.pkl")
+        cache_path = os.path.join(
+            self.cache_dir, f"bm25_{self.dataset_type}_{corpus_hash}.pkl"
+        )
 
         # Ensure cache directory exists
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -93,7 +103,7 @@ class BM25:
         if cache_path and os.path.exists(cache_path):
             print(f"Loading BM25 model from cache: {cache_path}")
             try:
-                with open(cache_path, 'rb') as f:
+                with open(cache_path, "rb") as f:
                     self.bm25_model = pickle.load(f)
                 return
             except Exception as e:
@@ -108,7 +118,7 @@ class BM25:
         if cache_path:
             print(f"Caching BM25 model to: {cache_path}")
             try:
-                with open(cache_path, 'wb') as f:
+                with open(cache_path, "wb") as f:
                     pickle.dump(self.bm25_model, f)
             except Exception as e:
                 print(f"Failed to save to cache: {e}")
@@ -128,11 +138,10 @@ class BM25:
             top_indices = np.argsort(scores_array)[::-1]
 
         return query_id, [
-            (self.doc_ids[idx], float(scores_array[idx]))
-            for idx in top_indices
+            (self.doc_ids[idx], float(scores_array[idx])) for idx in top_indices
         ]
 
-    def get_scores(self, top_k=10):
+    def get_scores(self, top_k=10, questions=None):
         """Get BM25 scores with parallel processing."""
         self.scores = {}
 
@@ -142,7 +151,9 @@ class BM25:
         # Prepare queries and IDs
         queries = []
         query_ids = []
-        for item in self.dataset:
+        query_data = questions if questions else self.questions
+
+        for item in query_data:
             query = item["question"]
             query_id = item.get("_id", item.get("id"))
             queries.append(query)
@@ -152,12 +163,18 @@ class BM25:
         with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
             # Submit all tasks
             future_to_query = {
-                executor.submit(self._process_single_query, query, query_id, top_k): query_id
+                executor.submit(
+                    self._process_single_query, query, query_id, top_k
+                ): query_id
                 for query, query_id in zip(queries, query_ids)
             }
 
             # Collect results with progress bar
-            for future in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Processing queries"):
+            for future in tqdm(
+                as_completed(future_to_query),
+                total=len(future_to_query),
+                desc="Processing queries",
+            ):
                 query_id, results = future.result()
                 self.scores[query_id] = results
 
@@ -168,15 +185,22 @@ class BM25:
 class TFIDF:
     """TF-IDF search implementation with caching and parallel processing."""
 
-    def __init__(self, dataset, dataset_type="hotpotqa", cache_dir="cache", use_cache=True, n_workers=4):
-        self.dataset = dataset
+    def __init__(
+        self,
+        corpus,
+        dataset_type="hotpotqa",
+        cache_dir="cache",
+        use_cache=True,
+        n_workers=4,
+    ):
+        self.corpus = corpus
         self.dataset_type = dataset_type
         self.cache_dir = cache_dir
         self.use_cache = use_cache
         self.n_workers = n_workers
         self.tfidf_vectorizer = None
         self.tfidf_matrix = None
-        self.corpus = []
+        self.corpus_docs = []
         self.doc_ids = []
         self.setup()
 
@@ -184,43 +208,40 @@ class TFIDF:
         """Setup corpus and document IDs."""
         self.hash_id_to_text = {}
         self.text_to_hash_id = {}
-        seen_texts = set()
 
         # Build corpus and mappings efficiently
-        if self.dataset_type in ["hotpotqa", "triviaqa"]:
-            for item in self.dataset:
+        if self.dataset_type in ["hotpotqa", "2wikimultihopqa"]:
+            for item in self.corpus:
                 for ctx in item["context"]:
                     title = ctx[0]
                     for idx, ct in enumerate(ctx[1]):
-                        if ct not in seen_texts:
-                            self.hash_id_to_text[(title, idx)] = ct
-                            self.text_to_hash_id[ct] = (title, idx)
-                            self.corpus.append(ct)
-                            self.doc_ids.append((title, idx))
-                            seen_texts.add(ct)
+                        self.hash_id_to_text[(title, idx)] = ct
+                        self.text_to_hash_id[ct] = (title, idx)
+                        self.corpus_docs.append(ct)
+                        self.doc_ids.append((title, idx))
         elif self.dataset_type == "musique":
-            for item in self.dataset:
+            for item in self.corpus:
                 for para in item["paragraphs"]:
                     title = para["title"]
                     idx = para["idx"]
                     text = para["paragraph_text"]
-                    if text not in seen_texts:
-                        self.hash_id_to_text[(title, idx)] = text
-                        self.text_to_hash_id[text] = (title, idx)
-                        self.corpus.append(text)
-                        self.doc_ids.append((title, idx))
-                        seen_texts.add(text)
+                    self.hash_id_to_text[(title, idx)] = text
+                    self.text_to_hash_id[text] = (title, idx)
+                    self.corpus_docs.append(text)
+                    self.doc_ids.append((title, idx))
 
-        print(f"Built corpus with {len(self.corpus)} unique documents")
+        print(f"Built corpus with {len(self.corpus_docs)} unique documents")
 
     def _get_cache_path(self):
         """Generate cache file path based on corpus hash."""
         if not self.use_cache:
             return None
 
-        corpus_str = "".join(self.corpus[:100])
+        corpus_str = "".join(self.corpus_docs[:100])
         corpus_hash = hashlib.md5(corpus_str.encode()).hexdigest()[:8]
-        cache_path = os.path.join(self.cache_dir, f"tfidf_{self.dataset_type}_{corpus_hash}.pkl")
+        cache_path = os.path.join(
+            self.cache_dir, f"tfidf_{self.dataset_type}_{corpus_hash}.pkl"
+        )
 
         os.makedirs(self.cache_dir, exist_ok=True)
         return cache_path
@@ -236,10 +257,10 @@ class TFIDF:
         if cache_path and os.path.exists(cache_path):
             print(f"Loading TF-IDF model from cache: {cache_path}")
             try:
-                with open(cache_path, 'rb') as f:
+                with open(cache_path, "rb") as f:
                     data = pickle.load(f)
-                    self.tfidf_vectorizer = data['vectorizer']
-                    self.tfidf_matrix = data['matrix']
+                    self.tfidf_vectorizer = data["vectorizer"]
+                    self.tfidf_matrix = data["matrix"]
                 return
             except Exception as e:
                 print(f"Failed to load from cache: {e}")
@@ -248,23 +269,28 @@ class TFIDF:
         print("Building TF-IDF index...")
         self.tfidf_vectorizer = TfidfVectorizer(
             max_features=50000,  # Limit vocabulary size for memory efficiency
-            stop_words='english',
+            stop_words="english",
             ngram_range=(1, 2),  # Use unigrams and bigrams
             min_df=2,  # Ignore terms that appear in less than 2 documents
-            max_df=0.95  # Ignore terms that appear in more than 95% of documents
+            max_df=0.95,  # Ignore terms that appear in more than 95% of documents
         )
 
-        self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(tqdm(self.corpus, desc="Vectorizing documents"))
+        self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(
+            tqdm(self.corpus_docs, desc="Vectorizing documents")
+        )
 
         # Save to cache
         if cache_path:
             print(f"Caching TF-IDF model to: {cache_path}")
             try:
-                with open(cache_path, 'wb') as f:
-                    pickle.dump({
-                        'vectorizer': self.tfidf_vectorizer,
-                        'matrix': self.tfidf_matrix
-                    }, f)
+                with open(cache_path, "wb") as f:
+                    pickle.dump(
+                        {
+                            "vectorizer": self.tfidf_vectorizer,
+                            "matrix": self.tfidf_matrix,
+                        },
+                        f,
+                    )
             except Exception as e:
                 print(f"Failed to save to cache: {e}")
 
@@ -284,11 +310,10 @@ class TFIDF:
             top_indices = np.argsort(similarities)[::-1]
 
         return query_id, [
-            (self.doc_ids[idx], float(similarities[idx]))
-            for idx in top_indices
+            (self.doc_ids[idx], float(similarities[idx])) for idx in top_indices
         ]
 
-    def get_scores(self, top_k=10):
+    def get_scores(self, top_k=10, questions=None):
         """Get TF-IDF scores with parallel processing."""
         self.scores = {}
 
@@ -298,7 +323,9 @@ class TFIDF:
         # Prepare queries and IDs
         queries = []
         query_ids = []
-        for item in self.dataset:
+        query_data = questions if questions is not None else self.corpus
+
+        for item in query_data:
             query = item["question"]
             query_id = item.get("_id", item.get("id"))
             queries.append(query)
@@ -307,12 +334,18 @@ class TFIDF:
         # Process queries in parallel
         with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
             future_to_query = {
-                executor.submit(self._process_single_query, query, query_id, top_k): query_id
+                executor.submit(
+                    self._process_single_query, query, query_id, top_k
+                ): query_id
                 for query, query_id in zip(queries, query_ids)
             }
 
             # Collect results with progress bar
-            for future in tqdm(as_completed(future_to_query), total=len(future_to_query), desc="Processing queries"):
+            for future in tqdm(
+                as_completed(future_to_query),
+                total=len(future_to_query),
+                desc="Processing queries",
+            ):
                 query_id, results = future.result()
                 self.scores[query_id] = results
 
@@ -401,7 +434,7 @@ def main():
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa/hotpotqa_1k.json",
+        default="datasets/hotpotqa",
         help="Path to dataset file",
     )
     parser.add_argument(
@@ -410,9 +443,7 @@ def main():
     parser.add_argument(
         "--cache_dir", type=str, default="cache", help="Directory for caching models"
     )
-    parser.add_argument(
-        "--no_cache", action="store_true", help="Disable caching"
-    )
+    parser.add_argument("--no_cache", action="store_true", help="Disable caching")
     parser.add_argument(
         "--n_workers", type=int, default=4, help="Number of worker threads"
     )
@@ -443,11 +474,12 @@ def main():
     if args.search_method == "bm25":
         print(f"Using BM25 search with {args.n_workers} workers")
         searcher = BM25(
+            questions,
             corpus,
             args.dataset_type,
             cache_dir=args.cache_dir,
             use_cache=use_cache,
-            n_workers=args.n_workers
+            n_workers=args.n_workers,
         )
     elif args.search_method == "tfidf":
         print(f"Using TF-IDF search with {args.n_workers} workers")
@@ -456,11 +488,11 @@ def main():
             args.dataset_type,
             cache_dir=args.cache_dir,
             use_cache=use_cache,
-            n_workers=args.n_workers
+            n_workers=args.n_workers,
         )
 
     # Get scores
-    top_k_scores = searcher.get_scores(top_k=args.top_k)
+    top_k_scores = searcher.get_scores(top_k=args.top_k, questions=questions)
     preds = {key: [v[0] for v in value] for key, value in top_k_scores.items()}
 
     # Save predictions
