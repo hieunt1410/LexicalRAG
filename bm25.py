@@ -439,14 +439,14 @@ def main():
     parser.add_argument(
         "--benchmark",
         type=str,
-        default="hotpotqa",
+        default="longembed",
         choices=["longembed", "litsearch", "mldr"],
         help="Dataset format type",
     )
     parser.add_argument(
         "--dataset_path",
         type=str,
-        default="datasets/hotpotqa",
+        default="datasets/LongEmbed",
         help="Path to dataset file",
     )
     parser.add_argument(

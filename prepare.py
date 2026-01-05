@@ -11,6 +11,8 @@ for dataset in datasets:
     queries = load_dataset(path="dwzhu/LongEmbed", name=dataset, split="queries")
     qrels = load_dataset(path="dwzhu/LongEmbed", name=dataset, split="qrels")
 
+    os.makedirs(f"datasets/LongEmbed/{dataset}")
+    
     corpus = [x for x in corpus]
     queries = [x for x in queries]
     qrels = [x for x in qrels]
