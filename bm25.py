@@ -1,6 +1,5 @@
 import argparse
 import json
-import re
 import os
 import pickle
 import hashlib
@@ -381,7 +380,8 @@ def calculate_metrics(golds, preds, benchmark="hotpotqa"):
     Args:
         golds: For longembed: Dict mapping dataset_name to {query_id: gold_labels}
                For hotpotqa: Dict mapping query_id to gold_labels
-        preds: Dict mapping query_id to predictions
+        preds: For longembed: Dict mapping dataset_name to {query_id: predictions}
+               For hotpotqa: Dict mapping query_id to predictions
         benchmark: Dataset type ("longembed", "hotpotqa", etc.)
 
     Returns:
@@ -392,14 +392,15 @@ def calculate_metrics(golds, preds, benchmark="hotpotqa"):
     if benchmark == "longembed":
         for dataset_name in golds.keys():
             dataset_golds = golds[dataset_name]
+            dataset_preds = preds.get(dataset_name, {})
             ds_prec, ds_recall, ds_acc, ds_ndcg = 0.0, 0.0, 0.0, 0.0
             ds_count = 0
 
             for query_id in dataset_golds.keys():
-                if query_id in preds:
+                if query_id in dataset_preds:
                     prec, recall, acc, ndcg = evaluate(
                         dataset_golds[query_id],
-                        preds[query_id],
+                        dataset_preds[query_id],
                         benchmark=benchmark,
                     )
                     ds_prec += prec
@@ -482,13 +483,15 @@ def main():
 
     # Get scores
     top_k_scores = searcher.get_scores(top_k=args.top_k, questions=queries)
-    # Flatten nested dataset structure: {dataset_name: {query_id: results}} -> {query_id: [doc_ids]}
+    # Keep nested structure: {dataset_name: {query_id: [doc_ids]}}
     preds = {}
     for dataset_name, dataset_scores in top_k_scores.items():
+        preds[dataset_name] = {}
         for query_id, results in dataset_scores.items():
-            preds[query_id] = [v[0] for v in results]
+            preds[dataset_name][query_id] = [v[0] for v in results]
 
     # Save predictions
+    os.makedirs("outputs", exist_ok=True)
     output_file = f"outputs/{args.search_method}_predictions.json"
     with open(output_file, "w") as f:
         json.dump(preds, f)
