@@ -2,7 +2,7 @@ import argparse
 import json
 import torch
 from abc import ABC, abstractmethod
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple
 from sentence_transformers import SentenceTransformer
 from FlagEmbedding import FlagReranker
 

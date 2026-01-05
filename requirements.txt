@@ -1,8 +1,7 @@
 rank-bm25
-sentence-transformers
-FlagEmbedding
 numpy
 torch
 tqdm
 argparse
 dotenv
+datasets==3.6.0
