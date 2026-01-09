@@ -1,12 +1,8 @@
 import argparse
 import json
 import os
-import pickle
-import hashlib
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 from rank_bm25 import BM25Okapi
 from tqdm import tqdm
@@ -17,14 +13,12 @@ class BM25:
         self,
         queries,
         corpus,
-        benchmark="hotpotqa",
-        cache_dir="cache",
+        benchmark="longembed",
         n_workers=4,
     ):
         self.queries = queries
         self.corpus = corpus
         self.benchmark = benchmark
-        self.cache_dir = cache_dir
         self.n_workers = n_workers
         self.scores = {}
 
@@ -109,182 +103,6 @@ class BM25:
         return self.scores
 
 
-class TFIDF:
-    """TF-IDF search implementation with caching and parallel processing."""
-
-    def __init__(
-        self,
-        corpus,
-        dataset_type="hotpotqa",
-        cache_dir="cache",
-        use_cache=True,
-        n_workers=4,
-    ):
-        self.original_corpus = corpus
-        self.dataset_type = dataset_type
-        self.cache_dir = cache_dir
-        self.use_cache = use_cache
-        self.n_workers = n_workers
-        self.tfidf_vectorizer = None
-        self.tfidf_matrix = None
-        self.corpus_docs = []
-        self.doc_ids = []
-        self.setup()
-
-    def setup(self):
-        """Setup corpus and document IDs."""
-        self.hash_id_to_text = {}
-        self.text_to_hash_id = {}
-
-        # Reset corpus_docs for building the searchable documents
-        self.corpus_docs = []
-        self.doc_ids = []
-
-        # Build corpus and mappings efficiently
-        if self.dataset_type in ["hotpotqa", "2wikimultihopqa"]:
-            for item in self.original_corpus:
-                ctxs = item["context"]
-                for ctx in ctxs:
-                    title = ctx[0]
-                    for idx, ct in enumerate(ctx[1]):
-                        self.hash_id_to_text[(title, idx)] = ct
-                        self.text_to_hash_id[ct] = (title, idx)
-                        self.corpus_docs.append(ct)
-                        self.doc_ids.append((title, idx))
-        elif self.dataset_type == "musique":
-            for item in self.original_corpus:
-                for para in item["paragraphs"]:
-                    title = para["title"]
-                    idx = para["idx"]
-                    text = para["paragraph_text"]
-                    self.hash_id_to_text[(title, idx)] = text
-                    self.text_to_hash_id[text] = (title, idx)
-                    self.corpus_docs.append(text)
-                    self.doc_ids.append((title, idx))
-
-        print(f"Built corpus with {len(self.corpus_docs)} unique documents")
-
-    def _get_cache_path(self):
-        """Generate cache file path based on corpus hash."""
-        if not self.use_cache:
-            return None
-
-        corpus_str = "".join(self.corpus_docs[:100])
-        corpus_hash = hashlib.md5(corpus_str.encode()).hexdigest()[:8]
-        cache_path = os.path.join(
-            self.cache_dir, f"tfidf_{self.dataset_type}_{corpus_hash}.pkl"
-        )
-
-        os.makedirs(self.cache_dir, exist_ok=True)
-        return cache_path
-
-    def _build_or_load_tfidf(self):
-        """Build TF-IDF model or load from cache."""
-        if self.tfidf_vectorizer is not None:
-            return
-
-        cache_path = self._get_cache_path()
-
-        # Try to load from cache
-        if cache_path and os.path.exists(cache_path):
-            print(f"Loading TF-IDF model from cache: {cache_path}")
-            try:
-                with open(cache_path, "rb") as f:
-                    data = pickle.load(f)
-                    self.tfidf_vectorizer = data["vectorizer"]
-                    self.tfidf_matrix = data["matrix"]
-                return
-            except Exception as e:
-                print(f"Failed to load from cache: {e}")
-
-        # Build new TF-IDF model
-        print("Building TF-IDF index...")
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=50000,  # Limit vocabulary size for memory efficiency
-            stop_words="english",
-            ngram_range=(1, 2),  # Use unigrams and bigrams
-            min_df=2,  # Ignore terms that appear in less than 2 documents
-            max_df=0.95,  # Ignore terms that appear in more than 95% of documents
-        )
-
-        self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(
-            tqdm(self.corpus_docs, desc="Vectorizing documents")
-        )
-
-        # Save to cache
-        if cache_path:
-            print(f"Caching TF-IDF model to: {cache_path}")
-            try:
-                with open(cache_path, "wb") as f:
-                    pickle.dump(
-                        {
-                            "vectorizer": self.tfidf_vectorizer,
-                            "matrix": self.tfidf_matrix,
-                        },
-                        f,
-                    )
-            except Exception as e:
-                print(f"Failed to save to cache: {e}")
-
-    def _process_single_query(self, query, query_id, top_k):
-        """Process a single query and return top-k results."""
-        # Transform query to TF-IDF space
-        query_vec = self.tfidf_vectorizer.transform([query])
-
-        # Calculate cosine similarity
-        similarities = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
-
-        # Use argpartition for O(n) selection
-        if len(similarities) > top_k:
-            top_indices = np.argpartition(similarities, -top_k)[-top_k:]
-            top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
-        else:
-            top_indices = np.argsort(similarities)[::-1]
-
-        return query_id, [
-            (self.doc_ids[idx], float(similarities[idx])) for idx in top_indices
-        ]
-
-    def get_scores(self, top_k=10, questions=None):
-        """Get TF-IDF scores with parallel processing."""
-        self.scores = {}
-
-        # Build or load TF-IDF model once
-        self._build_or_load_tfidf()
-
-        # Prepare queries and IDs
-        queries = []
-        query_ids = []
-        query_data = questions if questions is not None else self.corpus
-
-        for item in query_data:
-            query = item["question"]
-            query_id = item.get("_id", item.get("id"))
-            queries.append(query)
-            query_ids.append(query_id)
-
-        # Process queries in parallel
-        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
-            future_to_query = {
-                executor.submit(
-                    self._process_single_query, query, query_id, top_k
-                ): query_id
-                for query, query_id in zip(queries, query_ids)
-            }
-
-            # Collect results with progress bar
-            for future in tqdm(
-                as_completed(future_to_query),
-                total=len(future_to_query),
-                desc="Processing queries",
-            ):
-                query_id, results = future.result()
-                self.scores[query_id] = results
-
-        print(f"Processed {len(self.scores)} queries")
-        return self.scores
-
-
 def load_dataset(dataset_path, benchmark="longembed"):
     """Load dataset based on format type.
 
@@ -328,115 +146,184 @@ def load_dataset(dataset_path, benchmark="longembed"):
     return golds, queries, corpus
 
 
-def evaluate(gold, pred, benchmark="hotpotqa"):
-    """Evaluate predictions against gold labels.
-
-    Args:
-        gold: Gold reference - for longembed: str (doc_id), for hotpotqa: list of tuples
-        pred: Predictions - list of doc_ids for longembed, list of tuples for hotpotqa
-        benchmark: Dataset type ("longembed", "hotpotqa", etc.)
-
-    Returns:
-        For longembed: (recall@k, precision@k, accuracy, ndcg@k)
-        For hotpotqa: (precision, recall, f1)
+def evaluate_single_relevant(gold_doc_id, pred_doc_ids, cutoffs=[1, 3, 5, 10, 20, 50, 100]):
     """
-    if benchmark == "longembed":
-        # For longembed, gold is a single doc_id string
-        gold_doc_id = gold if isinstance(gold, str) else gold[0]
-        pred_doc_ids = pred if isinstance(pred, list) else [pred]
-
-        k = len(pred_doc_ids) if pred_doc_ids else 1
-
-        # Recall@k: 1 if gold doc_id is in predicted list, else 0
-        hit = 1 if gold_doc_id in pred_doc_ids else 0
-        recall_at_k = hit
-
-        # Precision@k: hit/k (since we retrieved k docs and only 1 is relevant)
-        precision_at_k = hit / k
-
-        # Accuracy: same as recall for single relevant document case
-        accuracy = hit
-
-        # NDCG@k
-        if gold_doc_id in pred_doc_ids:
-            # Find rank of gold document (1-indexed)
-            rank = pred_doc_ids.index(gold_doc_id) + 1
-            # DCG: 1/log2(rank+1) since relevance is binary (1 for relevant)
+    Compute retrieval metrics for single relevant document case.
+    
+    Args:
+        gold_doc_id: Gold document ID (single string)
+        pred_doc_ids: List of predicted doc IDs, ranked by relevance
+        cutoffs: List of k values for computing metrics at various cutoffs
+    
+    Returns:
+        dict with all metrics
+    """
+    pred_doc_ids = pred_doc_ids if pred_doc_ids else []
+    
+    # Check if gold document is in predictions and find rank
+    hit = 1 if gold_doc_id in pred_doc_ids else 0
+    rank = pred_doc_ids.index(gold_doc_id) + 1 if hit else None
+    
+    # Metrics at various cutoffs
+    recall_at = {}
+    precision_at = {}
+    ndcg_at = {}
+    
+    for cutoff in cutoffs:
+        # Only consider top-cutoff predictions
+        hit_at_cutoff = 1 if rank and rank <= cutoff else 0
+        
+        # Recall@cutoff: did we find the relevant doc in top-cutoff?
+        recall_at[cutoff] = hit_at_cutoff
+        
+        # Precision@cutoff: relevant found / cutoff
+        precision_at[cutoff] = hit_at_cutoff / cutoff
+        
+        # NDCG@cutoff
+        if rank and rank <= cutoff:
             dcg = 1.0 / np.log2(rank + 1)
-            # IDCG: 1.0 (perfect ranking would have relevant doc at rank 1)
-            idcg = 1.0
-            ndcg_at_k = dcg / idcg
+            idcg = 1.0  # ideal: relevant doc at rank 1
+            ndcg_at[cutoff] = dcg / idcg
         else:
-            ndcg_at_k = 0.0
+            ndcg_at[cutoff] = 0.0
+    
+    # MRR (Mean Reciprocal Rank): 1/rank of first relevant doc
+    mrr = 1.0 / rank if rank else 0.0
+    
+    return {
+        'recall_at': recall_at,
+        'precision_at': precision_at,
+        'ndcg_at': ndcg_at,
+        'mrr': mrr,
+        'rank': rank,
+    }
 
-        return precision_at_k, recall_at_k, accuracy, ndcg_at_k
-    else:
-        pass
 
-
-def calculate_metrics(golds, preds, benchmark="hotpotqa"):
-    """Calculate metrics per dataset.
+def calculate_metrics(golds, preds, benchmark="hotpotqa", cutoffs=[1, 3, 5, 10, 20, 50, 100]):
+    """Calculate metrics per dataset with various cutoffs.
 
     Args:
-        golds: For longembed: Dict mapping dataset_name to {query_id: gold_labels}
-               For hotpotqa: Dict mapping query_id to gold_labels
-        preds: For longembed: Dict mapping dataset_name to {query_id: predictions}
-               For hotpotqa: Dict mapping query_id to predictions
+        golds: Dict mapping dataset_name to {query_id: gold_doc_id}
+        preds: Dict mapping dataset_name to {query_id: [pred_doc_ids]}
         benchmark: Dataset type ("longembed", "hotpotqa", etc.)
+        cutoffs: List of k values for computing metrics at various cutoffs
 
     Returns:
-        For longembed: dict of {dataset_name: metrics_dict}
-        For hotpotqa: (precision, recall, f1)
+        dict of {dataset_name: metrics_dict}
     """
     dataset_metrics = {}
+    
     if benchmark == "longembed":
         for dataset_name in golds.keys():
             dataset_golds = golds[dataset_name]
             dataset_preds = preds.get(dataset_name, {})
-            ds_prec, ds_recall, ds_acc, ds_ndcg = 0.0, 0.0, 0.0, 0.0
-            ds_count = 0
+            
+            # Initialize accumulators for each cutoff
+            recall_sum = {k: 0.0 for k in cutoffs}
+            precision_sum = {k: 0.0 for k in cutoffs}
+            ndcg_sum = {k: 0.0 for k in cutoffs}
+            mrr_sum = 0.0
+            count = 0
 
             for query_id in dataset_golds.keys():
                 if query_id in dataset_preds:
-                    prec, recall, acc, ndcg = evaluate(
+                    metrics = evaluate_single_relevant(
                         dataset_golds[query_id],
                         dataset_preds[query_id],
-                        benchmark=benchmark,
+                        cutoffs=cutoffs,
                     )
-                    ds_prec += prec
-                    ds_recall += recall
-                    ds_acc += acc
-                    ds_ndcg += ndcg
-                    ds_count += 1
+                    
+                    for k in cutoffs:
+                        recall_sum[k] += metrics['recall_at'][k]
+                        precision_sum[k] += metrics['precision_at'][k]
+                        ndcg_sum[k] += metrics['ndcg_at'][k]
 
-            if ds_count > 0:
-                ds_f1 = (
-                    2 * (ds_prec / ds_count) * (ds_recall / ds_count)
-                    / ((ds_prec / ds_count) + (ds_recall / ds_count))
-                    if (ds_prec / ds_count) + (ds_recall / ds_count) > 0
-                    else 0.0
-                )
+                    mrr_sum += metrics['mrr']
+                    count += 1
+
+            if count > 0:
                 dataset_metrics[dataset_name] = {
-                    "precision": ds_prec / ds_count,
-                    "recall": ds_recall / ds_count,
-                    "f1": ds_f1,
-                    "accuracy": ds_acc / ds_count,
-                    "ndcg": ds_ndcg / ds_count,
-                    "count": ds_count,
+                    'recall_at': {k: recall_sum[k] / count for k in cutoffs},
+                    'precision_at': {k: precision_sum[k] / count for k in cutoffs},
+                    'ndcg_at': {k: ndcg_sum[k] / count for k in cutoffs},
+                    'mrr': mrr_sum / count,
+                    'count': count,
                 }
 
     return dataset_metrics
 
 
+def print_metrics_table(dataset_metrics, cutoffs=[1, 3, 5, 10, 20, 50, 100]):
+    """Print metrics in a formatted table."""
+    
+    for dataset_name, metrics in sorted(dataset_metrics.items()):
+        print(f"\n{'=' * 80}")
+        print(f"Dataset: {dataset_name} (n={metrics['count']})")
+        print(f"{'=' * 80}")
+        
+        # Filter cutoffs to only those present in metrics
+        available_cutoffs = [k for k in cutoffs if k in metrics['recall_at']]
+        
+        # Print header
+        header = f"{'Metric':<12}"
+        for k in available_cutoffs:
+            header += f"@{k:<7}"
+        print(header)
+        print("-" * 80)
+        
+        # Print each metric row
+        for metric_name in ['recall_at', 'precision_at', 'ndcg_at']:
+            row = f"{metric_name.replace('_at', ''):<12}"
+            for k in available_cutoffs:
+                row += f"{metrics[metric_name][k]:<8.4f}"
+            print(row)
+        
+        print("-" * 80)
+        print(f"MRR: {metrics['mrr']:.4f}")
+
+
+def print_summary_table(dataset_metrics, cutoffs=[1, 3, 5, 10, 20, 50, 100]):
+    """Print a summary table comparing all datasets."""
+    
+    print(f"\n{'=' * 100}")
+    print("SUMMARY: Recall@k Across Datasets")
+    print(f"{'=' * 100}")
+    
+    # Filter cutoffs
+    sample_metrics = next(iter(dataset_metrics.values()))
+    available_cutoffs = [k for k in cutoffs if k in sample_metrics['recall_at']]
+    
+    # Header
+    header = f"{'Dataset':<25}"
+    for k in available_cutoffs:
+        header += f"R@{k:<6}"
+    header += f"{'MRR':<8}"
+    print(header)
+    print("-" * 100)
+    
+    # Rows for each dataset
+    for dataset_name in sorted(dataset_metrics.keys()):
+        m = dataset_metrics[dataset_name]
+        row = f"{dataset_name:<25}"
+        for k in available_cutoffs:
+            row += f"{m['recall_at'][k]:<8.4f}"
+        row += f"{m['mrr']:<8.4f}"
+        print(row)
+    
+    # Average row
+    print("-" * 100)
+    avg_row = f"{'AVERAGE':<25}"
+    for k in available_cutoffs:
+        avg_recall = np.mean([m['recall_at'][k] for m in dataset_metrics.values()])
+        avg_row += f"{avg_recall:<8.4f}"
+    avg_mrr = np.mean([m['mrr'] for m in dataset_metrics.values()])
+    avg_row += f"{avg_mrr:<8.4f}"
+    print(avg_row)
+    print(f"{'=' * 100}")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--search_method",
-        type=str,
-        default="bm25",
-        choices=["bm25", "tfidf"],
-        help="Search method to use",
-    )
     parser.add_argument(
         "--benchmark",
         type=str,
@@ -451,38 +338,39 @@ def main():
         help="Path to dataset file",
     )
     parser.add_argument(
-        "--top_k", type=int, default=10, help="Number of documents to retrieve"
+        "--top_k", type=int, default=100, help="Number of documents to retrieve"
     )
     parser.add_argument(
-        "--cache_dir", type=str, default="cache", help="Directory for caching models"
+        "--cutoffs",
+        type=int,
+        nargs="+",
+        default=[1, 3, 5, 10, 20, 50, 100],
+        help="Cutoffs for evaluation metrics",
     )
     parser.add_argument(
         "--n_workers", type=int, default=4, help="Number of worker threads"
     )
     args = parser.parse_args()
 
+    # Ensure top_k >= max cutoff
+    max_cutoff = max(args.cutoffs)
+    if args.top_k < max_cutoff:
+        print(f"Warning: top_k ({args.top_k}) < max cutoff ({max_cutoff}). Setting top_k = {max_cutoff}")
+        args.top_k = max_cutoff
+
     golds, queries, corpus = load_dataset(args.dataset_path, args.benchmark)
 
-    if args.search_method == "bm25":
-        print(f"Using BM25 search with {args.n_workers} workers")
-        searcher = BM25(
-            queries,
-            corpus,
-            args.benchmark,
-            cache_dir=args.cache_dir,
-            n_workers=args.n_workers,
-        )
-    elif args.search_method == "tfidf":
-        print(f"Using TF-IDF search with {args.n_workers} workers")
-        searcher = TFIDF(
-            corpus,
-            args.benchmark,
-            cache_dir=args.cache_dir,
-            n_workers=args.n_workers,
-        )
+    print(f"Using BM25 search with {args.n_workers} workers")
+    searcher = BM25(
+        queries,
+        corpus,
+        args.benchmark,
+        n_workers=args.n_workers,
+    )
 
     # Get scores
     top_k_scores = searcher.get_scores(top_k=args.top_k, questions=queries)
+    
     # Keep nested structure: {dataset_name: {query_id: [doc_ids]}}
     preds = {}
     for dataset_name, dataset_scores in top_k_scores.items():
@@ -492,30 +380,43 @@ def main():
 
     # Save predictions
     os.makedirs("outputs", exist_ok=True)
-    output_file = f"outputs/{args.search_method}_predictions.json"
+    output_file = "outputs/bm25_predictions.json"
     with open(output_file, "w") as f:
         json.dump(preds, f)
 
-    metrics = calculate_metrics(golds, preds, benchmark=args.benchmark)
-    print(f"\nBenchmark: {args.benchmark}")
-    print(f"Search Method: {args.search_method.upper()}")
+    # Calculate and display metrics
+    metrics = calculate_metrics(golds, preds, benchmark=args.benchmark, cutoffs=args.cutoffs)
+    
+    print(f"\n{'#' * 100}")
+    print(f"Benchmark: {args.benchmark}")
+    print("Search Method: BM25")
+    print(f"Top-k: {args.top_k}")
+    print(f"Cutoffs: {args.cutoffs}")
+    print(f"{'#' * 100}")
 
-    if isinstance(metrics, dict):
-        # Multi-dataset format: dict of {dataset_name: metrics}
-        print(f"\nPer-Dataset Metrics (k={args.top_k}):")
-        print(f"{'Dataset':<20} {'P@k':<8} {'R@k':<8} {'F1@k':<8} {'Acc':<8} {'NDCG@k':<8} {'Count'}")
-        print("-" * 75)
-        for ds_name in sorted(metrics.keys()):
-            m = metrics[ds_name]
-            print(
-                f"{ds_name:<20} {m['precision']:<8.4f} {m['recall']:<8.4f} "
-                f"{m['f1']:<8.4f} {m['accuracy']:<8.4f} {m['ndcg']:<8.4f} {m['count']}"
-            )
-    else:
-        # Single dataset format: (precision, recall, f1)
-        prec, recall, f1 = metrics
-        print(f"Precision: {prec:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+    # Print detailed metrics for each dataset
+    print_metrics_table(metrics, cutoffs=args.cutoffs)
+    
+    # Print summary table
+    print_summary_table(metrics, cutoffs=args.cutoffs)
+    
+    # Save metrics to file
+    metrics_file = "outputs/bm25_metrics.json"
+    with open(metrics_file, "w") as f:
+        # Convert int keys to strings for JSON serialization
+        serializable_metrics = {}
+        for ds_name, ds_metrics in metrics.items():
+            serializable_metrics[ds_name] = {
+                'recall_at': {str(k): v for k, v in ds_metrics['recall_at'].items()},
+                'precision_at': {str(k): v for k, v in ds_metrics['precision_at'].items()},
+                'ndcg_at': {str(k): v for k, v in ds_metrics['ndcg_at'].items()},
+                'mrr': ds_metrics['mrr'],
+                'count': ds_metrics['count'],
+            }
+        json.dump(serializable_metrics, f, indent=2)
+    
     print(f"\nPredictions saved to: {output_file}")
+    print(f"Metrics saved to: {metrics_file}")
 
 
 if __name__ == "__main__":
