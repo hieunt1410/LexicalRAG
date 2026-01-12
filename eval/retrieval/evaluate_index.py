@@ -28,15 +28,25 @@ def load_index(index_path: str) -> KVStore:
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--index_name", type=str, required=True)
+parser.add_argument("--key", type=str, required=False, default="title_abstract")
 
 parser.add_argument("--top_k", type=int, required=False, default=200)
 parser.add_argument("--retrieval_results_root_dir", type=str, required=False, default="results/retrieval")
 parser.add_argument("--index_root_dir", type=str, required=False, default="retrieval_indices")
-parser.add_argument("--dataset_path", required=False, default="princeton-nlp/LitSearch")
+parser.add_argument("--dataset_path", required=False, default="litsearch")
+
 args = parser.parse_args()
 
 index = load_index(os.path.join(args.index_root_dir, args.index_name))
-query_set = [query for query in datasets.load_dataset(args.dataset_path, "query", split="full")]
+if args.dataset_path == "litsearch":
+    query_set = utils.read_json(f"datasets/{args.dataset_path}/queries.json")
+elif args.dataset_path == "longeembed":
+    query_set = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/queries.json")
+elif args.dataset_path == "mldr":
+    query_set = utils.read_json(f"datasets/{args.dataset_path}/queries.json")
+else:
+    raise ValueError("Invalid dataset path")
+
 for query in tqdm(query_set):
     query_text = query["query"]
     top_k = index.query(query_text, args.top_k)

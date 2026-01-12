@@ -5,7 +5,7 @@ from typing import List
 from utils import utils
 from eval.retrieval.kv_store import KVStore
 
-def get_index_name(args: argparse.Namespace) -> str:
+def  get_index_name(args: argparse.Namespace) -> str:
     return os.path.basename(args.dataset_path) + "." + args.key
 
 def create_index(args: argparse.Namespace) -> KVStore:
@@ -49,31 +49,46 @@ def create_index(args: argparse.Namespace) -> KVStore:
         raise ValueError("Invalid index type")
     return index
 
-def create_kv_pairs(data: List[dict], key: str) -> dict:
-    if key == "title_abstract":
-        kv_pairs = {utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record) for record in data}
-    elif key == "full_paper":
-        kv_pairs = {utils.get_clean_full_paper(record): utils.get_clean_corpusid(record) for record in data}
-    elif key == "paragraphs":
-        kv_pairs = {}
-        for record in data:
-            corpusid = utils.get_clean_corpusid(record)
-            paragraphs = utils.get_clean_paragraphs(record)
-            for paragraph_idx, paragraph in enumerate(paragraphs):
-                kv_pairs[paragraph] = (corpusid, paragraph_idx)
+def create_kv_pairs(dataset_path: str, dataset_name: str, data: List[dict], key: str) -> dict:
+    if dataset_path == "litsearch":
+        if key == "title_abstract":
+            kv_pairs = {utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record) for record in data}
+        elif key == "full_paper":
+            kv_pairs = {utils.get_clean_full_paper(record): utils.get_clean_corpusid(record) for record in data}
+        elif key == "paragraphs":
+            kv_pairs = {}
+            for record in data:
+                corpusid = utils.get_clean_corpusid(record)
+                paragraphs = utils.get_clean_paragraphs(record)
+                for paragraph_idx, paragraph in enumerate(paragraphs):
+                    kv_pairs[paragraph] = (corpusid, paragraph_idx)
+        else:
+            raise ValueError("Invalid key")
+    elif dataset_path == "longeembed":
+        kv_pairs = {record["text"]: record["doc_id"] for record in data}
+    elif dataset_path == "mldr":
+        kv_pairs = {record["title_abstract"]: record["doc_id"] for record in data}
     else:
-        raise ValueError("Invalid key")
+        raise ValueError("Invalid dataset path")
     return kv_pairs
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--index_type", required=True) # bm25, instructor, e5, gtr, grit
 parser.add_argument("--key", required=True), # title_absract, full_paper, paragraphs
 
-parser.add_argument("--dataset_path", required=False, default="princeton-nlp/LitSearch")
+parser.add_argument("--dataset_path", required=False, default="litsearch")
 parser.add_argument("--index_root_dir", required=False, default="retrieval_indices")
 args = parser.parse_args()
 
-corpus_data = datasets.load_dataset(args.dataset_path, "corpus_clean", split="full")
+if args.dataset_path == "litsearch":
+    corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
+elif args.dataset_path == "longeembed":
+    corpus_data = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/corpus.json")
+elif args.dataset_path == "mldr":
+    corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
+else:
+    raise ValueError("Invalid dataset path")
+
 index = create_index(args)
 kv_pairs = create_kv_pairs(corpus_data, args.key)
 index.create_index(kv_pairs)
