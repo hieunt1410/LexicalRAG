@@ -3,7 +3,7 @@ import json
 from datasets import load_dataset
 
 os.makedirs("datasets", exist_ok=True)
-os.makedirs("datasets/longeembed", exist_ok=True)
+os.makedirs("datasets/longembed", exist_ok=True)
 os.makedirs("datasets/litsearch", exist_ok=True)
 os.makedirs("datasets/mldr", exist_ok=True)
 
@@ -13,7 +13,7 @@ for dataset in datasets:
     queries = load_dataset(path="dwzhu/LongEmbed", name=dataset, split="queries")
     qrels = load_dataset(path="dwzhu/LongEmbed", name=dataset, split="qrels")
 
-    os.makedirs(f"datasets/longeembed/{dataset}", exist_ok=True)
+    os.makedirs(f"datasets/longembed/{dataset}", exist_ok=True)
     
     corpus = [x for x in corpus]
     queries = [x for x in queries]
@@ -22,10 +22,10 @@ for dataset in datasets:
     for query in queries:
         query["doc_id"] = [x["doc_id"] for x in qrels if x["qid"] == query["qid"]]
 
-    with open(f"datasets/longeembed/{dataset}/corpus.json", "w") as f:
+    with open(f"datasets/longembed/{dataset}/corpus.json", "w") as f:
         json.dump(corpus, f, indent=2)
 
-    with open(f"datasets/longeembed/{dataset}/queries.json", "w") as f:
+    with open(f"datasets/longembed/{dataset}/queries.json", "w") as f:
         json.dump(queries, f, indent=2)
 
     # with open(f"datasets/LongEmbed/{dataset}/qrels.json", "w") as f:

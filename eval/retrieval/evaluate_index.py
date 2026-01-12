@@ -40,7 +40,7 @@ args = parser.parse_args()
 index = load_index(os.path.join(args.index_root_dir, args.index_name))
 if args.dataset_path == "litsearch":
     query_set = utils.read_json(f"datasets/{args.dataset_path}/queries.json")
-elif args.dataset_path == "longeembed":
+elif args.dataset_path == "longembed":
     query_set = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/queries.json")
 elif args.dataset_path == "mldr":
     query_set = utils.read_json(f"datasets/{args.dataset_path}/queries.json")

@@ -64,7 +64,7 @@ def create_kv_pairs(dataset_path: str, dataset_name: str, data: List[dict], key:
                     kv_pairs[paragraph] = (corpusid, paragraph_idx)
         else:
             raise ValueError("Invalid key")
-    elif dataset_path == "longeembed":
+    elif dataset_path == "longembed":
         kv_pairs = {record["text"]: record["doc_id"] for record in data}
     elif dataset_path == "mldr":
         kv_pairs = {record["title_abstract"]: record["doc_id"] for record in data}
@@ -82,7 +82,7 @@ args = parser.parse_args()
 
 if args.dataset_path == "litsearch":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
-elif args.dataset_path == "longeembed":
+elif args.dataset_path == "longembed":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/corpus.json")
 elif args.dataset_path == "mldr":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
