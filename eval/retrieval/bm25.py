@@ -6,6 +6,8 @@ from typing import List, Tuple, Any
 from eval.retrieval.kv_store import KVStore
 from eval.retrieval.kv_store import TextType
 
+nltk.download("punkt_tab")  # For tokenization
+nltk.download("stopwords")  # For stopwords
 
 class BM25(KVStore):
     def __init__(self, index_name: str):

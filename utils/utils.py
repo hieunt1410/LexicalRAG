@@ -1,8 +1,7 @@
 import os
 import json
 from typing import List, Any, Tuple
-from datasets import Dataset
-from utils.openai_utils import OPENAIBaseEngine
+# from utils.openai_utils import OPENAIBaseEngine
 
 ##### file reading and writing #####
 
@@ -39,6 +38,12 @@ def read_txt(filename: str) -> str:
     return text
 
 ##### evaluation metrics #####
+
+def calculate_precision(retrieved: List[int], relevant_docs: List[int]) -> float:
+    num_retrieved = len(retrieved)
+    num_relevant_retrieved = len(set(retrieved).intersection(set(relevant_docs)))
+    precision = num_relevant_retrieved / num_retrieved if num_retrieved > 0 else 0
+    return precision
 
 def calculate_recall(retrieved: List[int], relevant_docs: List[int]) -> float:
     num_relevant_retrieved = len(set(retrieved).intersection(set(relevant_docs)))
@@ -134,7 +139,7 @@ def get_s2orc_citations(item: dict, corpus_data: dict = None) -> List[int]:
     except:
         return []
 
-def get_s2orc_dict(data: Dataset) -> dict:
+def get_s2orc_dict(data) -> dict:
     return {get_s2orc_corpusid(item): item for item in data}
 
 ##### reading fields from corpus_clean #####
@@ -185,26 +190,26 @@ def get_clean_paragraphs(item: dict, min_words: int = 10) -> List[str]:
 def get_clean_citations(item: dict) -> List[int]:
     return item['citations']
 
-def get_clean_dict(data: Dataset) -> dict:
+def get_clean_dict(data) -> dict:
     return {get_clean_corpusid(item): item for item in data}
 
 ##### openai gpt-4 model #####
 
-def get_gpt4_model(model_name: str = "gpt-4-1106-preview", azure: bool = True) -> OPENAIBaseEngine:
-    model = OPENAIBaseEngine(model_name, azure)
-    model.test_api()
-    return model
+# def get_gpt4_model(model_name: str = "gpt-4-1106-preview", azure: bool = True) -> OPENAIBaseEngine:
+#     model = OPENAIBaseEngine(model_name, azure)
+#     model.test_api()
+#     return model
 
-def prompt_gpt4_model(model: OPENAIBaseEngine, prompt: str = None, messages: List[dict] = None) -> str:
-    if prompt is not None:
-        messages = [{"role": "assistant", "content": prompt}]
-    elif messages is None:
-        raise ValueError("Either prompt or messages must be provided")
+# def prompt_gpt4_model(model: OPENAIBaseEngine, prompt: str = None, messages: List[dict] = None) -> str:
+#     if prompt is not None:
+#         messages = [{"role": "assistant", "content": prompt}]
+#     elif messages is None:
+#         raise ValueError("Either prompt or messages must be provided")
     
-    response = model.safe_completion(messages)
-    if response["finish_reason"] != "stop":
-        print(f"Unexpected stop reason: {response['finish_reason']}")
-    return response["content"]
+#     response = model.safe_completion(messages)
+#     if response["finish_reason"] != "stop":
+#         print(f"Unexpected stop reason: {response['finish_reason']}")
+#     return response["content"]
 
 ##### cache directory #####
 
