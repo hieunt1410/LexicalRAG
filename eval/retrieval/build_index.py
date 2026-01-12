@@ -49,7 +49,7 @@ def create_index(args: argparse.Namespace) -> KVStore:
         raise ValueError("Invalid index type")
     return index
 
-def create_kv_pairs(dataset_path: str, dataset_name: str, data: List[dict], key: str) -> dict:
+def create_kv_pairs(dataset_path: str, data: List[dict], key: str) -> dict:
     if dataset_path == "litsearch":
         if key == "title_abstract":
             kv_pairs = {utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record) for record in data}
@@ -90,7 +90,7 @@ else:
     raise ValueError("Invalid dataset path")
 
 index = create_index(args)
-kv_pairs = create_kv_pairs(corpus_data, args.key)
+kv_pairs = create_kv_pairs(args.dataset_path, corpus_data, args.key)
 index.create_index(kv_pairs)
 
 index_name = get_index_name(args)
