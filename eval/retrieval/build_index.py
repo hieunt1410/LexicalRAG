@@ -78,6 +78,8 @@ def create_kv_pairs(dataset_path: str, data: List[dict], key: str) -> dict:
         kv_pairs = {record["text"]: record["doc_id"] for record in data}
     elif dataset_path == "mldr":
         kv_pairs = {record["title_abstract"]: record["doc_id"] for record in data}
+    elif dataset_path == "coliee_task1":
+        kv_pairs = {record["text"]: record["doc_id"] for record in data}
     else:
         raise ValueError("Invalid dataset path")
     return kv_pairs
