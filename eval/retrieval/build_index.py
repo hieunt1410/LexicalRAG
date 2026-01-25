@@ -54,32 +54,44 @@ def create_index(args: argparse.Namespace) -> KVStore:
 
 
 def create_kv_pairs(dataset_path: str, data: List[dict], key: str) -> dict:
+    from collections import defaultdict
+
     if dataset_path == "litsearch":
         if key == "title_abstract":
-            kv_pairs = {
-                utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record)
-                for record in data
-            }
+            kv_pairs = defaultdict(list)
+            for record in data:
+                kv_pairs[utils.get_clean_title_abstract(record)].append(utils.get_clean_corpusid(record))
+            kv_pairs = dict(kv_pairs)
         elif key == "full_paper":
-            kv_pairs = {
-                utils.get_clean_full_paper(record): utils.get_clean_corpusid(record)
-                for record in data
-            }
+            kv_pairs = defaultdict(list)
+            for record in data:
+                kv_pairs[utils.get_clean_full_paper(record)].append(utils.get_clean_corpusid(record))
+            kv_pairs = dict(kv_pairs)
         elif key == "paragraphs":
-            kv_pairs = {}
+            kv_pairs = defaultdict(list)
             for record in data:
                 corpusid = utils.get_clean_corpusid(record)
                 paragraphs = utils.get_clean_paragraphs(record)
                 for paragraph_idx, paragraph in enumerate(paragraphs):
-                    kv_pairs[paragraph] = (corpusid, paragraph_idx)
+                    kv_pairs[paragraph].append((corpusid, paragraph_idx))
+            kv_pairs = dict(kv_pairs)
         else:
             raise ValueError("Invalid key")
     elif dataset_path == "longembed":
-        kv_pairs = {record["text"]: record["doc_id"] for record in data}
+        kv_pairs = defaultdict(list)
+        for record in data:
+            kv_pairs[record["text"]].append(record["doc_id"])
+        kv_pairs = dict(kv_pairs)
     elif dataset_path == "mldr":
-        kv_pairs = {record["title_abstract"]: record["doc_id"] for record in data}
+        kv_pairs = defaultdict(list)
+        for record in data:
+            kv_pairs[record["title_abstract"]].append(record["doc_id"])
+        kv_pairs = dict(kv_pairs)
     elif dataset_path == "coliee_task1":
-        kv_pairs = {record["text"]: record["doc_id"] for record in data}
+        kv_pairs = defaultdict(list)
+        for record in data:
+            kv_pairs[record["text"]].append(record["doc_id"])
+        kv_pairs = dict(kv_pairs)
     else:
         raise ValueError("Invalid dataset path")
     return kv_pairs

@@ -55,9 +55,23 @@ class KVStore:
         encoded_query = self._encode(query_text, TextType.QUERY)
         indices, scores = self._query(encoded_query, n)
         if return_keys:
-            results = [(self.keys[i], self.values[i]) for i in indices]
+            results = []
+            for i, score in zip(indices, scores):
+                value = self.values[i]
+                if isinstance(value, list):
+                    for v in value:
+                        results.append((self.keys[i], v))
+                else:
+                    results.append((self.keys[i], value))
         else:
-            results = {self.values[i]: scores[i] for i in indices}
+            results = {}
+            for i, score in zip(indices, scores):
+                value = self.values[i]
+                if isinstance(value, list):
+                    for v in value:
+                        results[v] = score
+                else:
+                    results[value] = score
         return results
 
     def save(self, dir_name: str) -> None:
