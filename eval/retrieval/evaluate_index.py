@@ -5,10 +5,12 @@ from tqdm import tqdm
 from utils import utils
 from eval.retrieval.kv_store import KVStore
 
+
 def load_index(index_path: str) -> KVStore:
     index_type = os.path.basename(index_path).split(".")[-1]
     if index_type == "bm25":
         from eval.retrieval.bm25 import BM25
+
         index = BM25(None).load(index_path)
     # elif index_type == "instructor":
     #     from eval.retrieval.instructor import Instructor
@@ -26,13 +28,21 @@ def load_index(index_path: str) -> KVStore:
         raise ValueError("Invalid index type")
     return index
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--index_name", type=str, required=True)
 parser.add_argument("--key", type=str, required=False, default="title_abstract")
 
 parser.add_argument("--top_k", type=int, required=False, default=200)
-parser.add_argument("--retrieval_results_root_dir", type=str, required=False, default="results/retrieval")
-parser.add_argument("--index_root_dir", type=str, required=False, default="retrieval_indices")
+parser.add_argument(
+    "--retrieval_results_root_dir",
+    type=str,
+    required=False,
+    default="results/retrieval",
+)
+parser.add_argument(
+    "--index_root_dir", type=str, required=False, default="retrieval_indices"
+)
 parser.add_argument("--dataset_path", required=False, default="litsearch")
 
 args = parser.parse_args()
@@ -44,6 +54,10 @@ elif args.dataset_path == "longembed":
     query_set = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/queries.json")
 elif args.dataset_path == "mldr":
     query_set = utils.read_json(f"datasets/{args.dataset_path}/queries.json")
+elif args.dataset_path == "coliee_task1":
+    query_set = utils.read_json(
+        f"datasets/{args.dataset_path}/task1_test_queries_{args.key}.json"
+    )
 else:
     raise ValueError("Invalid dataset path")
 
@@ -54,6 +68,8 @@ for query in tqdm(query_set):
         query_text = query["text"]
     elif args.dataset_path == "mldr":
         pass
+    elif args.dataset_path == "coliee_task1":
+        query_text = query["query"]
     else:
         raise ValueError("Invalid dataset path")
     top_k = index.query(query_text, args.top_k)

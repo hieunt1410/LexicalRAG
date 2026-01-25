@@ -5,14 +5,17 @@ from typing import List
 from utils import utils
 from eval.retrieval.kv_store import KVStore
 
-def  get_index_name(args: argparse.Namespace) -> str:
+
+def get_index_name(args: argparse.Namespace) -> str:
     return os.path.basename(args.dataset_path) + "." + args.key
+
 
 def create_index(args: argparse.Namespace) -> KVStore:
     index_name = get_index_name(args)
 
     if args.index_type == "bm25":
         from eval.retrieval.bm25 import BM25
+
         index = BM25(index_name)
     # elif args.index_type == "instructor":
     #     from eval.retrieval.instructor import Instructor
@@ -49,12 +52,19 @@ def create_index(args: argparse.Namespace) -> KVStore:
         raise ValueError("Invalid index type")
     return index
 
+
 def create_kv_pairs(dataset_path: str, data: List[dict], key: str) -> dict:
     if dataset_path == "litsearch":
         if key == "title_abstract":
-            kv_pairs = {utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record) for record in data}
+            kv_pairs = {
+                utils.get_clean_title_abstract(record): utils.get_clean_corpusid(record)
+                for record in data
+            }
         elif key == "full_paper":
-            kv_pairs = {utils.get_clean_full_paper(record): utils.get_clean_corpusid(record) for record in data}
+            kv_pairs = {
+                utils.get_clean_full_paper(record): utils.get_clean_corpusid(record)
+                for record in data
+            }
         elif key == "paragraphs":
             kv_pairs = {}
             for record in data:
@@ -72,9 +82,10 @@ def create_kv_pairs(dataset_path: str, data: List[dict], key: str) -> dict:
         raise ValueError("Invalid dataset path")
     return kv_pairs
 
+
 parser = argparse.ArgumentParser()
-parser.add_argument("--index_type", required=True) # bm25, instructor, e5, gtr, grit
-parser.add_argument("--key", required=True), # title_absract, full_paper, paragraphs
+parser.add_argument("--index_type", required=True)  # bm25, instructor, e5, gtr, grit
+parser.add_argument("--key", required=True),  # title_absract, full_paper, paragraphs
 
 parser.add_argument("--dataset_path", required=False, default="litsearch")
 parser.add_argument("--index_root_dir", required=False, default="retrieval_indices")
@@ -83,9 +94,15 @@ args = parser.parse_args()
 if args.dataset_path == "litsearch":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
 elif args.dataset_path == "longembed":
-    corpus_data = utils.read_json(f"datasets/{args.dataset_path}/{args.key}/corpus.json")
+    corpus_data = utils.read_json(
+        f"datasets/{args.dataset_path}/{args.key}/corpus.json"
+    )
 elif args.dataset_path == "mldr":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
+elif args.dataset_path == "coliee_task1":
+    corpus_data = utils.read_json(
+        f"datasets/{args.dataset_path}/task1_test_queries_{args.key}.json"
+    )
 else:
     raise ValueError("Invalid dataset path")
 
