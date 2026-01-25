@@ -48,7 +48,14 @@ else:
     raise ValueError("Invalid dataset path")
 
 for query in tqdm(query_set):
-    query_text = query["query"]
+    if args.dataset_path == "litsearch":
+        query_text = query["query"]
+    elif args.dataset_path == "longembed":
+        query_text = query["text"]
+    elif args.dataset_path == "mldr":
+        pass
+    else:
+        raise ValueError("Invalid dataset path")
     top_k = index.query(query_text, args.top_k)
     query["retrieved"] = top_k
 

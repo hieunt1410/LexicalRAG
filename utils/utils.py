@@ -62,6 +62,14 @@ def calculate_ndcg(retrieved: List[int], relevant_docs: List[int]) -> float:
     ndcg = dcg / idcg if idcg > 0 else 0
     return ndcg
 
+def calculate_accuracy(retrieved: List[int], relevant_docs: List[int]) -> float:
+    """
+    Calculate accuracy (hit rate) - whether at least one relevant document was retrieved.
+    Returns 1.0 if any relevant document is in the retrieved list, 0.0 otherwise.
+    """
+    num_relevant_retrieved = len(set(retrieved).intersection(set(relevant_docs)))
+    return 1.0 if num_relevant_retrieved > 0 else 0.0
+
 def calculate_ngram_overlap(query: str, text: str) -> float:
     query_ngrams = set(query.split())
     text_ngrams = set(text.split())

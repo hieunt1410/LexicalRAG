@@ -44,11 +44,14 @@ with open("datasets/litsearch/corpus.json", "w") as f:
     json.dump(corpus_clean_data, f, indent=2)
 
 # MLDR
-# mldr_data = load_dataset("princeton-nlp/MLDR", "mldr", split="full")
-# test_data = load_dataset("princeton-nlp/MLDR", "test", split="full")
+language = 'en'
+train_data = load_dataset('Shitao/MLDR', language, split="train")
+test_data = load_dataset('Shitao/MLDR', language, split="test")
+# load corpus
+corpus = load_dataset('Shitao/MLDR', f'corpus-{language}', split='corpus')
 
-# with open("datasets/mldr/corpus.json", "w") as f:
-#     json.dump(mldr_data, f, indent=2)
-
-# with open("datasets/mldr/test.json", "w") as f:
-#     json.dump(test_data, f, indent=2)
+with open("datasets/mldr/corpus.json", "w") as f:
+    json.dump(corpus, f, indent=2)
+    
+with open("datasets/mldr/train.json", "w") as f:
+    json.dump(train_data, f, indent=2)

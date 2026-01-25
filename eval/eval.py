@@ -16,48 +16,86 @@ def parse_args():
     return parser.parse_args()
 
 
-def evaluate_metrics(predictions: List[dict], topk: List[int]) -> dict:
-    """
-    Evaluate retrieval metrics for each k value.
+# def evaluate_metrics(predictions: List[dict], topk: List[int]) -> dict:
+#     """
+#     Evaluate retrieval metrics for each k value.
     
-    For each query, we evaluate the top-k retrieved documents against
-    the ground truth relevant documents (corpusids).
-    """
+#     For each query, we evaluate the top-k retrieved documents against
+#     the ground truth relevant documents (corpusids).
+#     """
+#     metrics = {}
+#     num_queries = len(predictions)
+    
+#     for k in topk:
+#         prec_sum = 0
+#         recall_sum = 0
+#         f1_sum = 0
+#         ndcg_sum = 0
+#         acc_sum = 0
+        
+#         for item in predictions:
+#             relevant_docs = item["corpusids"] if "corpusids" in item else item["doc_id"]
+#             retrieved_at_k = item["retrieved"][:k]
+
+#             prec = utils.calculate_precision(retrieved_at_k, relevant_docs)
+#             recall = utils.calculate_recall(retrieved_at_k, relevant_docs)
+#             f1 = 2 * (prec * recall) / (prec + recall) if (prec + recall) > 0 else 0
+#             ndcg = utils.calculate_ndcg(retrieved_at_k, relevant_docs)
+#             acc = utils.calculate_accuracy(retrieved_at_k, relevant_docs)
+            
+#             prec_sum += prec
+#             recall_sum += recall
+#             f1_sum += f1
+#             ndcg_sum += ndcg
+#             acc_sum += acc
+
+#         metrics[k] = {
+#             "prec": prec_sum / num_queries,
+#             "recall": recall_sum / num_queries,
+#             "f1": f1_sum / num_queries,
+#             "ndcg": ndcg_sum / num_queries,
+#             "acc": acc_sum / num_queries,
+#         }
+#     return metrics
+def evaluate_metrics(predictions: List[dict], topk: List[int]) -> dict:
     metrics = {}
     num_queries = len(predictions)
-    
+
     for k in topk:
-        prec_sum = 0
-        recall_sum = 0
-        f1_sum = 0
-        ndcg_sum = 0
-        
+        tp, fp, fn = 0, 0, 0
+        acc_sum = 0.0
+        ndcg_sum = 0.0
+
         for item in predictions:
-            relevant_docs = item["corpusids"]
+            relevant_docs = item["corpusids"] if "corpusids" in item else item["doc_id"]
             retrieved_at_k = item["retrieved"][:k]
 
-            prec = utils.calculate_precision(retrieved_at_k, relevant_docs)
-            recall = utils.calculate_recall(retrieved_at_k, relevant_docs)
-            f1 = 2 * (prec * recall) / (prec + recall) if (prec + recall) > 0 else 0
-            ndcg = utils.calculate_ndcg(retrieved_at_k, relevant_docs)
-            
-            prec_sum += prec
-            recall_sum += recall
-            f1_sum += f1
-            ndcg_sum += ndcg
+            tp += len(set(retrieved_at_k) & set(relevant_docs))
+            fp += len(set(retrieved_at_k) - set(relevant_docs))
+            fn += len(set(relevant_docs) - set(retrieved_at_k))
+
+            acc_sum += utils.calculate_accuracy(retrieved_at_k, relevant_docs)
+            ndcg_sum += utils.calculate_ndcg(retrieved_at_k, relevant_docs)
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy = acc_sum / num_queries if num_queries > 0 else 0
+        ndcg = ndcg_sum / num_queries if num_queries > 0 else 0
 
         metrics[k] = {
-            "prec": prec_sum / num_queries,
-            "recall": recall_sum / num_queries,
-            "f1": f1_sum / num_queries,
-            "ndcg": ndcg_sum / num_queries,
+            "prec": precision,
+            "recall": recall,
+            "f1": f1,
+            "acc": accuracy,
+            "ndcg": ndcg,
         }
     return metrics
 
 
 def print_metrics(metrics: dict) -> None:
     """Pretty print evaluation metrics in a formatted table."""
-    header = f"{'k':>6} │ {'Prec':>8} │ {'Recall':>8} │ {'F1':>8} │ {'NDCG':>8}"
+    header = f"{'k':>6} │ {'Prec':>8} │ {'Recall':>8} │ {'F1':>8} │ {'NDCG':>8} │ {'Acc':>8}"
     separator = "─" * len(header)
 
     print("\n" + "═" * len(header))
@@ -69,7 +107,7 @@ def print_metrics(metrics: dict) -> None:
     for k, scores in sorted(metrics.items()):
         print(
             f"{k:>6} │ {scores['prec']:>8.4f} │ {scores['recall']:>8.4f} │ "
-            f"{scores['f1']:>8.4f} │ {scores['ndcg']:>8.4f}"
+            f"{scores['f1']:>8.4f} │ {scores['ndcg']:>8.4f} │ {scores['acc']:>8.4f}"
         )
 
     print(separator)
