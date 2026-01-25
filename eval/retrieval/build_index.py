@@ -103,7 +103,7 @@ elif args.dataset_path == "mldr":
     corpus_data = utils.read_json(f"datasets/{args.dataset_path}/corpus.json")
 elif args.dataset_path == "coliee_task1":
     corpus_data = utils.read_json(
-        f"datasets/{args.dataset_path}/task1_test_queries_{args.key}.json"
+        f"datasets/{args.dataset_path}/task1_test_corpus_{args.key}.json"
     )
 else:
     raise ValueError("Invalid dataset path")
