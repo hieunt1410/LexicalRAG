@@ -9,6 +9,7 @@ from eval.retrieval.kv_store import TextType
 nltk.download("punkt_tab")  # For tokenization
 nltk.download("stopwords")  # For stopwords
 
+
 class BM25(KVStore):
     def __init__(self, index_name: str):
         super().__init__(index_name, "bm25")
@@ -34,10 +35,9 @@ class BM25(KVStore):
         return tokens_list
 
     def _query(self, encoded_query: List[str], n: int) -> List[int]:
-        top_indices = np.argsort(self.index.get_scores(encoded_query))[::-1][
-            :n
-        ].tolist()
-        return top_indices
+        scores = self.index.get_scores(encoded_query)
+        top_indices = np.argsort(scores)[::-1][:n].tolist()
+        return top_indices, scores[top_indices]
 
     def clear(self) -> None:
         super().clear()

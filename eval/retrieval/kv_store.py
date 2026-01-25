@@ -53,11 +53,11 @@ class KVStore:
 
     def query(self, query_text: str, n: int, return_keys: bool = False) -> List[Any]:
         encoded_query = self._encode(query_text, TextType.QUERY)
-        indices = self._query(encoded_query, n)
+        indices, scores = self._query(encoded_query, n)
         if return_keys:
             results = [(self.keys[i], self.values[i]) for i in indices]
         else:
-            results = [self.values[i] for i in indices]
+            results = {self.values[i]: scores[i] for i in indices}
         return results
 
     def save(self, dir_name: str) -> None:
