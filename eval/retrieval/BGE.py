@@ -18,8 +18,8 @@ class BGE(KVStore):
         self.max_length = max_length
         self._model = BGEM3FlagModel(model_path, use_fp16=use_fp16)
 
-    def _encode_batch(
-        self, texts: List[str], _type: TextType, _show_progress_bar: bool = True
+    def _encode_batch(  # noqa: ARG002
+        self, texts: List[str], _type: TextType, show_progress_bar: bool = True
     ) -> np.ndarray:
         output = self._model.encode(
             texts,
