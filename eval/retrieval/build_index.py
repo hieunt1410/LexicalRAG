@@ -1,6 +1,5 @@
 import os
 import argparse
-import datasets
 from typing import List
 from utils import utils
 from eval.retrieval.kv_store import KVStore
@@ -31,9 +30,12 @@ def create_index(args: argparse.Namespace) -> KVStore:
     #     else:
     #         raise ValueError("Invalid key")
     #     index = Instructor(index_name, key_instruction, query_instruction)
-    # elif args.index_type == "e5":
-    #     from eval.retrieval.e5 import E5
-    #     index = E5(index_name)
+    elif args.index_type == "bge":
+        from eval.retrieval.BGE import BGE
+        index = BGE(index_name)
+    elif args.index_type == "e5":
+        from eval.retrieval.E5 import E5
+        index = E5(index_name)
     # elif args.index_type == "gtr":
     #     from eval.retrieval.gtr import GTR
     #     index = GTR(index_name)
