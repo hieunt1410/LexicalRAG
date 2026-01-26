@@ -35,7 +35,7 @@ class BGE(KVStore):
 
     def _query(self, encoded_query: np.ndarray, n: int) -> tuple[List[int], np.ndarray]:
         encoded_keys = np.array(self.encoded_keys)
-        scores = np.dot(encoded_keys, encoded_query).astype(np.float16)
+        scores = np.dot(encoded_keys, encoded_query).astype(np.float32)
         top_indices = np.argsort(scores)[::-1][:n].tolist()
         return top_indices, scores[top_indices]
 
