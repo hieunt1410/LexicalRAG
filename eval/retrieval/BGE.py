@@ -19,13 +19,12 @@ class BGE(KVStore):
         self._model = BGEM3FlagModel(model_path, use_fp16=use_fp16)
 
     def _encode_batch(
-        self, texts: List[str], _type: TextType, show_progress_bar: bool = True
+        self, texts: List[str], _type: TextType, _show_progress_bar: bool = True
     ) -> np.ndarray:
         output = self._model.encode(
             texts,
             batch_size=32,
             max_length=self.max_length,
-            show_progress_bar=show_progress_bar,
             return_dense=True,
             return_sparse=False,
             return_colbert_vecs=False,
