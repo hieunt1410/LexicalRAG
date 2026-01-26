@@ -69,9 +69,9 @@ class KVStore:
                 value = self.values[i]
                 if isinstance(value, list):
                     for v in value:
-                        results[v] = score
+                        results[v] = float(score)
                 else:
-                    results[value] = score
+                    results[value] = float(score)
         return results
 
     def save(self, dir_name: str) -> None:
