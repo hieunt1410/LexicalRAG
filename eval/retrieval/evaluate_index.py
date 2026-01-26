@@ -12,6 +12,10 @@ def load_index(index_path: str) -> KVStore:
         from eval.retrieval.bm25 import BM25
 
         index = BM25(None).load(index_path)
+    elif index_type == "bge":
+        from eval.retrieval.BGE import BGE
+
+        index = BGE(None).load(index_path)
     # elif index_type == "instructor":
     #     from eval.retrieval.instructor import Instructor
     #     index = Instructor(None, None, None).load(index_path)
